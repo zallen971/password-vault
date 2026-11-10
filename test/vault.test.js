@@ -213,6 +213,65 @@ describe('several devices', () => {
     assert.ok(laptop.item(fromPhone.id));
   });
 
+  test('a quick change never overwrites a newer version that is still arriving', async () => {
+    const item = await laptop.saveItem(login('Racing', { password: 'old-password' }));
+    await phone.checkForChanges();
+
+    // The laptop changes the password. The phone starts syncing, and before
+    // that finishes its user stars the item (a change based on the old copy).
+    await laptop.saveItem({ ...laptop.item(item.id), login: { ...item.login, password: 'new-password' } });
+    const syncing = phone.checkForChanges();
+    const starring = phone.setFavorite(item.id, true);
+    await Promise.all([syncing, starring]);
+
+    assert.equal(phone.item(item.id).favorite, true);
+    assert.equal(phone.item(item.id).login.password, 'new-password', 'the star must be applied to the newest version');
+    await laptop.checkForChanges();
+    assert.equal(laptop.item(item.id).login.password, 'new-password', 'the password change must not be lost');
+    assert.equal(laptop.item(item.id).favorite, true);
+  });
+
+  test('an edit based on an outdated copy is refused even if the newer version arrives first', async () => {
+    const item = await laptop.saveItem(login('Edited twice', { password: 'first' }));
+    await phone.checkForChanges();
+    const outdated = phone.item(item.id);
+
+    await laptop.saveItem({ ...laptop.item(item.id), login: { ...item.login, password: 'second' } });
+    const syncing = phone.checkForChanges();
+    const saving = phone.saveItem({ ...outdated, notes: 'written on the phone' });
+    await syncing;
+    await assert.rejects(saving, (err) => err instanceof VaultError && err.code === 'conflict');
+
+    assert.equal(phone.item(item.id).login.password, 'second', 'the newer version is what the phone now shows');
+    assert.equal(phone.item(item.id).notes, '');
+    await laptop.checkForChanges();
+    assert.equal(laptop.item(item.id).login.password, 'second');
+  });
+
+  test('two quick changes to one item both take effect', async () => {
+    const item = await laptop.saveItem(login('Double tap'));
+    await Promise.all([laptop.setFavorite(item.id, true), laptop.trashItems([item.id])]);
+    assert.equal(laptop.item(item.id).favorite, true);
+    assert.ok(laptop.item(item.id).deletedAt);
+    await Promise.all([laptop.restoreItems([item.id]), laptop.setFavorite(item.id, false)]);
+    assert.equal(laptop.item(item.id).favorite, false);
+    assert.equal(laptop.item(item.id).deletedAt, null);
+    await phone.checkForChanges();
+    assert.deepEqual(phone.item(item.id), laptop.item(item.id));
+  });
+
+  test('deleting a folder while its items are changing elsewhere keeps the newest items', async () => {
+    const folder = await laptop.saveFolder({ name: 'Short-lived' });
+    const item = await laptop.saveItem({ ...login('Filed', { password: 'before' }), folderId: folder.id });
+    await phone.checkForChanges();
+
+    await laptop.saveItem({ ...laptop.item(item.id), login: { ...item.login, password: 'after' } });
+    await Promise.all([phone.checkForChanges(), phone.deleteFolder(folder.id)]);
+    assert.equal(phone.folder(folder.id), null);
+    assert.equal(phone.item(item.id).folderId, null);
+    assert.equal(phone.item(item.id).login.password, 'after', 'moving the item out must not roll back its password');
+  });
+
   test('deleting an item that changed elsewhere is refused', async () => {
     const item = await laptop.saveItem(login('Restored elsewhere'));
     await phone.checkForChanges();

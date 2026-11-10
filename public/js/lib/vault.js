@@ -234,24 +234,33 @@ export class Vault extends EventTarget {
   }
 
   // ---- Writing ----
+  //
+  // Every write goes through #commit, which runs changes one at a time and
+  // works out each change when its turn comes, from the newest local copy.
+  // Small changes (star, trash, move) are therefore applied on top of
+  // whatever has synced in meanwhile instead of overwriting it. A full edit
+  // is different: it replaces the item, so it names the revision it was based
+  // on and the server refuses it if that is no longer the latest.
 
   /** Creates or updates an item and returns the saved version. */
   async saveItem(input) {
-    const existing = this.item(input.id);
-    const now = new Date().toISOString();
-    const item = normalizeItem({ ...input, createdAt: existing?.createdAt ?? input.createdAt, updatedAt: now });
-    if (existing) {
-      // Keep a trail of replaced passwords so a mistaken change can be undone.
-      item.passwordHistory = existing.passwordHistory;
-      const previous = existing.login?.password;
-      if (previous && previous !== item.login?.password) {
-        item.passwordHistory = [{ password: previous, changedAt: now }, ...existing.passwordHistory].slice(
-          0,
-          MAX_PASSWORD_HISTORY,
-        );
+    // The revision the caller was looking at when they decided to save.
+    const basedOn = this.#records.get(input.id)?.rev ?? null;
+    let item;
+    await this.#commit(() => {
+      const existing = this.item(input.id);
+      const now = new Date().toISOString();
+      item = normalizeItem({ ...input, createdAt: existing?.createdAt ?? input.createdAt, updatedAt: now });
+      if (existing) {
+        // Keep a trail of replaced passwords so a mistaken change can be undone.
+        item.passwordHistory = existing.passwordHistory;
+        const previous = existing.login?.password;
+        if (previous && previous !== item.login?.password) {
+          item.passwordHistory = [{ password: previous, changedAt: now }, ...existing.passwordHistory].slice(0, MAX_PASSWORD_HISTORY);
+        }
       }
-    }
-    await this.#commit([item]);
+      return { upserts: [item], basedOn: new Map([[item.id, basedOn]]) };
+    });
     return item;
   }
 
@@ -270,25 +279,29 @@ export class Vault extends EventTarget {
   }
 
   deleteItems(ids) {
-    return this.#commit([], ids.filter((id) => this.item(id)));
+    return this.#commit(() => ({ deletes: ids.filter((id) => this.item(id)) }));
   }
 
   emptyTrash() {
-    return this.deleteItems(this.items.filter((item) => item.deletedAt).map((item) => item.id));
+    return this.#commit(() => ({ deletes: this.items.filter((item) => item.deletedAt).map((item) => item.id) }));
   }
 
   async saveFolder(input) {
-    const existing = this.folder(input.id);
-    const folder = normalizeFolder({ ...existing, ...input, updatedAt: new Date().toISOString() });
-    if (!folder.name) throw new Error('A folder needs a name');
-    await this.#commit([folder]);
+    let folder;
+    await this.#commit(() => {
+      folder = normalizeFolder({ ...this.folder(input.id), ...input, updatedAt: new Date().toISOString() });
+      if (!folder.name) throw new Error('A folder needs a name');
+      return { upserts: [folder] };
+    });
     return folder;
   }
 
   /** Deletes a folder. Its items are kept and simply become unfiled. */
   deleteFolder(id) {
-    const moved = this.items.filter((item) => item.folderId === id).map((item) => ({ ...item, folderId: null }));
-    return this.#commit(moved, [id]);
+    return this.#commit(() => ({
+      upserts: this.items.filter((item) => item.folderId === id).map((item) => ({ ...item, folderId: null })),
+      deletes: this.folder(id) ? [id] : [],
+    }));
   }
 
   /**
@@ -327,40 +340,51 @@ export class Vault extends EventTarget {
 
     const records = [...folders, ...items];
     for (let start = 0; start < records.length; start += SYNC_CHUNK) {
-      await this.#commit(records.slice(start, start + SYNC_CHUNK));
+      const chunk = records.slice(start, start + SYNC_CHUNK);
+      await this.#commit(() => ({ upserts: chunk }));
     }
     return { added: items.length, skipped, folders: folders.length };
   }
 
+  /** Applies a small change to each item, starting from its newest local copy. */
   #modify(ids, change) {
-    const updated = [];
-    for (const id of ids) {
-      const item = this.item(id);
-      if (item) updated.push(change(item));
-    }
-    return this.#commit(updated);
+    return this.#commit(() => ({
+      upserts: ids
+        .map((id) => this.item(id))
+        .filter(Boolean)
+        .map(change),
+    }));
   }
 
   async #purgeOldTrash() {
     const cutoff = Date.now() - TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-    const expired = this.items.filter((item) => item.deletedAt && new Date(item.deletedAt).getTime() < cutoff);
-    if (expired.length) await this.deleteItems(expired.map((item) => item.id));
+    await this.#commit(() => ({
+      deletes: this.items.filter((item) => item.deletedAt && new Date(item.deletedAt).getTime() < cutoff).map((item) => item.id),
+    }));
   }
 
-  /** Encrypts and uploads a set of changes as one all-or-nothing step. */
-  #commit(upserts, deletes = []) {
-    if (!upserts.length && !deletes.length) return Promise.resolve();
+  /**
+   * Encrypts and uploads a set of changes as one all-or-nothing step.
+   * `plan` is called when it is this operation's turn and returns
+   * `{ upserts, deletes, basedOn }`. Each change is sent with the revision it
+   * builds on (the local one, unless `basedOn` names an earlier one), and the
+   * server rejects the whole step if any of those is out of date.
+   */
+  #commit(plan) {
     return this.#serialize(async () => {
       const session = this.#require();
+      const { upserts = [], deletes = [], basedOn } = plan();
+      if (!upserts.length && !deletes.length) return;
+      const baseRev = (id) => (basedOn?.has(id) ? basedOn.get(id) : (this.#records.get(id)?.rev ?? null));
       const changes = {
         upserts: await Promise.all(
           upserts.map(async (value) => ({
             id: value.id,
-            baseRev: this.#records.get(value.id)?.rev ?? null,
+            baseRev: baseRev(value.id),
             data: await encryptJson(session.key, value, recordContext(value.id)),
           })),
         ),
-        deletes: deletes.map((id) => ({ id, baseRev: this.#records.get(id)?.rev ?? null })),
+        deletes: deletes.map((id) => ({ id, baseRev: baseRev(id) })),
       };
 
       let result;
