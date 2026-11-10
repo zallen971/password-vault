@@ -30,7 +30,7 @@ export function renderApp(root, { vault, serverInfo }) {
     filter: { type: 'all' },
     query: '',
     selectedId: null,
-    editor: null, // { item, isNew, dirty } while an item is being edited
+    editor: null, // { item, base, isNew, dirty } while an item is being edited
     sort: prefs.get('sort') === 'updated' ? 'updated' : 'name',
   };
   let shown = null; // what the detail pane currently displays
@@ -191,7 +191,8 @@ export function renderApp(root, { vault, serverInfo }) {
   }
 
   function editItem(item) {
-    state.editor = { item: structuredClone(item), isNew: false, dirty: false };
+    // `base` is the version the edit started from, to notice if it changes underneath.
+    state.editor = { item: structuredClone(item), base: item, isNew: false, dirty: false };
     renderDetail(true);
   }
 
@@ -201,8 +202,19 @@ export function renderApp(root, { vault, serverInfo }) {
     renderDetail(true);
   }
 
+  const CONFLICT_MESSAGE = 'This item was changed on another device while you were editing. Save again to keep your version, or cancel to keep theirs.';
+
   async function saveDraft(draft) {
-    const { isNew } = state.editor;
+    const session = state.editor;
+    const { isNew } = session;
+    // Background sync may have brought in a newer version (or a deletion)
+    // since this edit began. Never overwrite that without saying so.
+    const current = vault.item(draft.id);
+    if (!isNew && current !== session.base) {
+      session.base = current; // saving a second time is an informed choice
+      toast(CONFLICT_MESSAGE, { type: 'error', duration: 9000 });
+      throw new VaultError('conflict');
+    }
     try {
       const saved = await vault.saveItem(draft);
       state.editor = null;
@@ -212,12 +224,8 @@ export function renderApp(root, { vault, serverInfo }) {
       markSelection(true);
     } catch (error) {
       const conflict = error instanceof VaultError && error.code === 'conflict';
-      toast(
-        conflict
-          ? 'This item was changed on another device. Save again to keep your version, or cancel to keep theirs.'
-          : describeError(error),
-        { type: 'error', duration: conflict ? 9000 : undefined },
-      );
+      if (conflict) session.base = vault.item(draft.id);
+      toast(conflict ? CONFLICT_MESSAGE : describeError(error), { type: 'error', duration: conflict ? 9000 : undefined });
       throw error;
     }
   }

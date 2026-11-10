@@ -528,6 +528,45 @@ async function main() {
     await page.locator('.shell').waitFor();
   });
 
+  await step('warns before overwriting a change made in another tab', async () => {
+    const other = await newPage(context, 'other tab');
+    await other.goto(server.url);
+    await unlock(other);
+    await other.locator('.shell').waitFor();
+
+    // This tab starts editing...
+    await row(page, 'Door code').click();
+    await page.getByRole('button', { name: 'Edit' }).click();
+    await page.getByLabel('Notes').fill('edited in the first tab');
+
+    // ...while the other tab changes and saves the same item.
+    await row(other, 'Door code').click();
+    await other.getByRole('button', { name: 'Edit' }).click();
+    await other.getByLabel('Notes').fill('edited in the other tab');
+    await other.getByRole('button', { name: 'Save' }).click();
+    await sawToast(other, 'Changes saved');
+    await page.waitForTimeout(800); // let the first tab sync in the background
+
+    await page.getByRole('button', { name: 'Save' }).click();
+    await sawToast(page, 'changed on another device');
+    assert.equal(await page.getByLabel('Notes').inputValue(), 'edited in the first tab', 'the edit in progress is kept');
+    await other.reload(); // nothing was overwritten yet
+    await unlock(other);
+    await row(other, 'Door code').click();
+    assert.equal(await field(other, 'Note').locator('.field-value').textContent(), 'edited in the other tab');
+
+    // Saving again is a deliberate choice to keep this version.
+    await page.getByRole('button', { name: 'Save' }).click();
+    await sawToast(page, 'Changes saved');
+    await other.waitForFunction(() => document.querySelector('.detail .field-value.pre')?.textContent === 'edited in the first tab');
+    await other.close();
+
+    await page.getByRole('button', { name: 'Edit' }).click();
+    await page.getByLabel('Notes').fill('4321 then #');
+    await page.getByRole('button', { name: 'Save' }).click();
+    await sawToast(page, 'Changes saved');
+  });
+
   // The next two tests control time. Playwright's fake clock belongs to the
   // whole browser context, so they each get a context of their own.
   await step('locks automatically when idle, and clears the clipboard', async () => {
@@ -721,6 +760,41 @@ async function main() {
     assert.equal(await health.count(), 0);
   });
 
+  await step('checks for breached passwords without sending any password', async () => {
+    // The real service is replaced with a stand-in that knows one breached password.
+    const { createHash } = await import('node:crypto');
+    const hash = createHash('sha1').update('admin123').digest('hex').toUpperCase();
+    const requested = [];
+    const endpoint = 'https://api.pwnedpasswords.com/range/*';
+    await page.route(endpoint, (route) => {
+      const url = route.request().url();
+      requested.push(url);
+      const body = url.endsWith(hash.slice(0, 5)) ? `${hash.slice(5)}:4242\r\n` : '00000000000000000000000000000000000:7\r\n';
+      return route.fulfill({ status: 200, contentType: 'text/plain', headers: { 'Access-Control-Allow-Origin': '*' }, body });
+    });
+
+    await page.getByRole('button', { name: 'Vault health' }).click();
+    const health = page.getByRole('dialog', { name: 'Vault health' });
+    await health.getByRole('button', { name: 'Check now' }).click();
+    const breached = health.locator('.report', { hasText: '1 breached password' });
+    await breached.locator('.row', { hasText: 'Home Router' }).waitFor();
+    assert.match(await breached.textContent(), /Seen 4,242×/);
+
+    assert.ok(requested.length >= 20, 'one lookup per distinct password');
+    for (const url of requested) assert.match(url, /^https:\/\/api\.pwnedpasswords\.com\/range\/[0-9A-F]{5}$/, 'only a 5-character hash prefix may be sent');
+    await page.keyboard.press('Escape');
+
+    // If the service cannot be reached, say so rather than reporting "all clear".
+    await page.unroute(endpoint);
+    await page.route(endpoint, (route) => route.abort());
+    await page.getByRole('button', { name: 'Vault health' }).click();
+    await health.getByRole('button', { name: 'Check now' }).click();
+    await health.getByText('could not be reached').waitFor();
+    assert.equal(await health.locator('.all-clear', { hasText: 'No breached passwords' }).count(), 0);
+    await page.keyboard.press('Escape');
+    await page.unroute(endpoint);
+  });
+
   await step('switches theme and remembers settings', async () => {
     await page.getByRole('button', { name: 'Settings' }).click();
     const settings = page.getByRole('dialog', { name: 'Settings' });
@@ -888,8 +962,10 @@ async function main() {
   });
 
   await step('raised no console errors or security-policy violations', async () => {
-    // The two failed sign-ins above legitimately log a 401; nothing else may appear.
-    const unexpected = problems.filter((problem) => !/Failed to load resource: the server responded with a status of (401|429)/.test(problem));
+    // Rejected sign-ins legitimately log a 401, and the simulated breach-service
+    // outage logs a failed request; nothing else may appear.
+    const expected = /Failed to load resource: (the server responded with a status of (401|429)|net::ERR_FAILED)/;
+    const unexpected = problems.filter((problem) => !expected.test(problem));
     assert.deepEqual(unexpected, []);
   });
 
