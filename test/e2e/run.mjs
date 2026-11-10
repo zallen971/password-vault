@@ -550,14 +550,22 @@ async function main() {
     assert.equal(await clipboard(page), 'a-brand-new-Passw0rd!');
   });
 
-  await step('locks when the browser parks the page in its back/forward cache', async () => {
+  await step('locks a tab the browser parks in its back/forward cache, and only that tab', async () => {
+    const parked = await newPage(context, 'parked tab');
+    await parked.goto(server.url);
+    await unlock(parked);
+    await parked.locator('.shell').waitFor();
+
     // Browsers keep such pages alive in memory; simulate the page being parked.
-    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
-    await page.getByRole('heading', { name: 'Welcome back' }).waitFor();
-    assert.ok(!(await page.content()).includes('octocat'));
+    await parked.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+    await parked.getByRole('heading', { name: 'Welcome back' }).waitFor();
+    assert.ok(!(await parked.content()).includes('octocat'));
+    await parked.close();
+
+    // Leaving one tab is not a reason to lock the others (and lose their unsaved edits).
+    await page.waitForTimeout(400);
+    assert.equal(await page.locator('.shell').count(), 1);
     // An ordinary page unload needs no handling: memory is discarded anyway.
-    await unlock(page);
-    await page.locator('.shell').waitFor();
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })));
     await page.waitForTimeout(200);
     assert.equal(await page.locator('.shell').count(), 1);
@@ -642,6 +650,27 @@ async function main() {
     await timedContext.clock.fastForward('02:00');
     await timed.getByRole('heading', { name: 'Welcome back' }).waitFor();
     await timed.locator('.auth-notice', { hasText: 'inactivity' }).waitFor();
+    await timedContext.close();
+  });
+
+  await step('locks on the first click after the computer wakes from sleep', async () => {
+    const timedContext = await browser.newContext();
+    await timedContext.clock.install();
+    const sleepy = await newPage(timedContext, 'sleepy tab');
+    await sleepy.goto(server.url);
+    await unlock(sleepy);
+    await sleepy.locator('.shell').waitFor();
+    await row(sleepy, 'GitHub').first().click();
+    await sleepy.locator('.detail-title', { hasText: 'GitHub' }).waitFor();
+
+    // Eight hours pass with no timers running, as when a laptop sleeps. The
+    // very first thing that happens on waking is the person clicking, before
+    // any timer has had the chance to notice.
+    await timedContext.clock.setSystemTime(Date.now() + 8 * 60 * 60 * 1000);
+    await sleepy.mouse.click(700, 500);
+    await sleepy.getByRole('heading', { name: 'Welcome back' }).waitFor();
+    await sleepy.locator('.auth-notice', { hasText: 'inactivity' }).waitFor();
+    assert.ok(!(await sleepy.content()).includes('octocat'), 'nothing from the vault is left on screen');
     await timedContext.close();
   });
 

@@ -339,6 +339,85 @@ describe('brute-force protection', () => {
     }
   });
 
+  test('after a password change, addresses trusted under the old password are no longer exempt', async () => {
+    const server = await startServer({ trustProxy: true, limits: { loginFailuresPerEmail: 3 } });
+    try {
+      const creds = fakeCredentials('rotated@example.com');
+      const from = (ip, authKey) =>
+        server.request('POST', '/api/auth/login', { body: { email: creds.email, authKey }, headers: { 'X-Forwarded-For': ip } });
+      const registered = await server.request('POST', '/api/auth/register', { body: creds, headers: { 'X-Forwarded-For': '203.0.113.1' } });
+
+      // Someone who knows the (leaked) old password signs in from two addresses, which become "known".
+      assert.equal((await from('198.51.100.1', creds.authKey)).status, 200);
+      assert.equal((await from('198.51.100.2', creds.authKey)).status, 200);
+
+      const next = fakeCredentials(creds.email);
+      const changed = await server.request('POST', '/api/account/password', {
+        token: registered.body.token,
+        headers: { 'X-Forwarded-For': '203.0.113.1' },
+        body: { authKey: creds.authKey, newAuthKey: next.authKey, kdf: next.kdf, salt: next.salt, protectedKey: next.protectedKey },
+      });
+      assert.equal(changed.status, 200);
+
+      // Those addresses now count as strangers again: the account-wide limit applies to them.
+      const guess = () => fakeCredentials().authKey;
+      assert.equal((await from('198.51.100.1', guess())).status, 401);
+      assert.equal((await from('198.51.100.2', guess())).status, 401);
+      assert.equal((await from('198.51.100.1', guess())).status, 401);
+      assert.equal((await from('198.51.100.2', guess())).status, 429, 'blocked by the account-wide limit');
+      // The owner's own address, which made the change, is still trusted.
+      assert.equal((await from('203.0.113.1', next.authKey)).status, 200);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('the address that created an account is trusted from the start', async () => {
+    const server = await startServer({ trustProxy: true, limits: { loginFailuresPerEmail: 3 } });
+    try {
+      const creds = fakeCredentials('fresh@example.com');
+      await server.request('POST', '/api/auth/register', { body: creds, headers: { 'X-Forwarded-For': '203.0.113.1' } });
+      for (let i = 0; i < 3; i += 1) {
+        await server.request('POST', '/api/auth/login', { body: { email: creds.email, authKey: fakeCredentials().authKey }, headers: { 'X-Forwarded-For': `198.51.100.${i}` } });
+      }
+      const owner = await server.request('POST', '/api/auth/login', { body: { email: creds.email, authKey: creds.authKey }, headers: { 'X-Forwarded-For': '203.0.113.1' } });
+      assert.equal(owner.status, 200, 'strangers cannot lock out someone who has only just signed up');
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('requests sent by other websites are refused and do not use up the allowance', async () => {
+    const server = await startServer({ limits: { authRequestsPerIp: 6 } });
+    try {
+      const creds = fakeCredentials('victim@example.com');
+      await server.request('POST', '/api/auth/register', { body: creds });
+
+      // What a hostile page can make the visitor's browser send: no JSON content type.
+      for (let i = 0; i < 30; i += 1) {
+        const marked = await server.request('POST', '/api/auth/login', {
+          body: 'x',
+          headers: { 'Content-Type': 'text/plain', 'Sec-Fetch-Site': 'cross-site', Origin: 'https://evil.example' },
+        });
+        assert.equal(marked.status, 403);
+        assert.equal(marked.body.error, 'cross_site_request');
+        const unmarked = await server.request('POST', '/api/auth/login', { body: 'x', headers: { 'Content-Type': 'text/plain' } });
+        assert.equal(unmarked.status, 415, 'older browsers send no Sec-Fetch-Site, but still cannot send JSON');
+      }
+      // Even well-formed JSON is refused if the browser says another site sent it.
+      const forged = await server.request('POST', '/api/auth/login', { body: { email: creds.email, authKey: creds.authKey }, headers: { 'Sec-Fetch-Site': 'same-site' } });
+      assert.equal(forged.status, 403);
+
+      // The real user is unaffected.
+      const own = await server.request('POST', '/api/auth/login', { body: { email: creds.email, authKey: creds.authKey }, headers: { 'Sec-Fetch-Site': 'same-origin' } });
+      assert.equal(own.status, 200);
+      const typed = await fetch(`${server.url}/api/config`, { headers: { 'Sec-Fetch-Site': 'none' } });
+      assert.equal(typed.status, 200);
+    } finally {
+      await server.close();
+    }
+  });
+
   test('successful sign-ins do not use up the allowance', async () => {
     const server = await startServer({ limits: { loginFailuresPerPair: 3, loginFailuresPerEmail: 3, loginFailuresPerIp: 3 } });
     try {
@@ -382,6 +461,46 @@ describe('account changes', () => {
       assert.equal(newLogin.status, 200);
       const prelogin = await server.request('POST', '/api/auth/prelogin', { body: { email: creds.email } });
       assert.equal(prelogin.body.salt, next.salt);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('sign-ins with the old password that overlap a change do not leave live sessions', async () => {
+    const server = await startServer();
+    try {
+      let creds = fakeCredentials('overlap@example.com');
+      let token = (await server.request('POST', '/api/auth/register', { body: creds })).body.token;
+      let survivors = 0;
+      let overlapped = 0;
+
+      for (let round = 0; round < 8; round += 1) {
+        const next = fakeCredentials(creds.email);
+        const change = server.request('POST', '/api/account/password', {
+          token,
+          body: { authKey: creds.authKey, newAuthKey: next.authKey, kdf: next.kdf, salt: next.salt, protectedKey: next.protectedKey },
+        });
+        // Someone who knows the old password keeps signing in while the change is under way,
+        // so some of their attempts start before it and finish after it.
+        const old = creds;
+        const racing = Array.from({ length: 24 }, async (_, index) => {
+          await new Promise((resolve) => setTimeout(resolve, index * 4));
+          return server.request('POST', '/api/auth/login', { body: { email: old.email, authKey: old.authKey } });
+        });
+        const [changed, ...logins] = await Promise.all([change, ...racing]);
+        assert.equal(changed.status, 200);
+
+        for (const login of logins.filter((response) => response.status === 200)) {
+          overlapped += 1;
+          const stillValid = await server.request('GET', '/api/vault', { token: login.body.token });
+          if (stillValid.status === 200) survivors += 1;
+        }
+        assert.equal((await server.request('GET', '/api/vault', { token: changed.body.token })).status, 200);
+        creds = next;
+        token = changed.body.token;
+      }
+      assert.equal(survivors, 0, `${survivors} of ${overlapped} old-password sessions outlived a password change`);
+      if (process.env.DEBUG_RACE) console.log(`old-password sign-ins that succeeded during a change: ${overlapped}`);
     } finally {
       await server.close();
     }
@@ -549,6 +668,28 @@ describe('web app delivery', () => {
     }
   });
 
+  test('answers only to the host names it is meant to be reached by', async () => {
+    const local = await startServer({ allowedHosts: ['localhost', '127.0.0.1', '[::1]'] });
+    try {
+      const ask = (host, route = '/api/config') => rawGet(local.url, route, { Host: host });
+      const { port } = new URL(local.url);
+      assert.equal((await ask(`localhost:${port}`)).status, 200);
+      assert.equal((await ask(`127.0.0.1:${port}`)).status, 200);
+      assert.equal((await ask(`[::1]:${port}`)).status, 200);
+      assert.equal((await ask('LOCALHOST')).status, 200);
+
+      // A hostile site that points its own domain at this machine ("DNS rebinding").
+      for (const host of [`attacker.example:${port}`, 'attacker.example', 'localhost.attacker.example', '127.0.0.1.attacker.example', 'evil.localhost']) {
+        assert.equal((await ask(host)).status, 421, `Host: ${host}`);
+        assert.equal((await ask(host, '/')).status, 421, `Host: ${host} (page)`);
+      }
+    } finally {
+      await local.close();
+    }
+    // With no list configured (the app is published under a name of the operator's choosing) any host is served.
+    assert.equal((await rawGet(server.url, '/api/config', { Host: 'vault.example.com' })).status, 200);
+  });
+
   test('API responses are never cached', async () => {
     const response = await fetch(`${server.url}/api/config`);
     assert.equal(response.headers.get('cache-control'), 'no-store');
@@ -568,11 +709,11 @@ describe('web app delivery', () => {
   });
 });
 
-async function rawGet(baseUrl, rawPath) {
+async function rawGet(baseUrl, rawPath, headers = {}) {
   const { default: http } = await import('node:http');
   const { hostname, port } = new URL(baseUrl);
   return new Promise((resolve, reject) => {
-    const req = http.request({ hostname, port, path: rawPath, method: 'GET' }, (res) => {
+    const req = http.request({ hostname, port, path: rawPath, method: 'GET', headers }, (res) => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', (chunk) => (body += chunk));

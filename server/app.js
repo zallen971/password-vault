@@ -92,6 +92,7 @@ const isRevision = (value) => Number.isInteger(value) && value >= 0;
  * @param {boolean} [options.trustProxy]    honour X-Forwarded-For / X-Forwarded-Proto
  * @param {string} [options.publicDir]
  * @param {object} [options.limits]         overrides for DEFAULT_LIMITS
+ * @param {string[]|null} [options.allowedHosts]  host names the app may be reached by; null accepts any
  * @param {boolean} [options.quiet]
  */
 export async function createApp(options) {
@@ -101,6 +102,7 @@ export async function createApp(options) {
     trustProxy = false,
     publicDir = path.join(ROOT, 'public'),
     backupDays = 14,
+    allowedHosts = null,
     quiet = false,
   } = options;
   const limits = { ...DEFAULT_LIMITS, ...options.limits };
@@ -121,6 +123,10 @@ export async function createApp(options) {
   // Clients (address + account) that have signed in successfully before.
   const knownClients = new Map(); // `${ip}|${email}` -> time it stops being remembered
   const KNOWN_CLIENT_MS = 30 * 24 * 60 * 60 * 1000;
+  const rememberClient = (ip, email) => knownClients.set(`${ip}|${email}`, Date.now() + KNOWN_CLIENT_MS);
+  const forgetClients = (email) => {
+    for (const client of knownClients.keys()) if (client.endsWith(`|${email}`)) knownClients.delete(client);
+  };
 
   const sweeper = setInterval(() => {
     sessions.sweep();
@@ -213,7 +219,10 @@ export async function createApp(options) {
     for (const [limiter, key] of guards) limiter.hit(key);
 
     const account = store.findByEmail(email);
-    const ok = account ? await verifyAuthKey(authKey, account.auth) : await fakeVerify(authKey);
+    let ok = account ? await verifyAuthKey(authKey, account.auth) : await fakeVerify(authKey);
+    // The check above takes a moment. If the master password was changed (or
+    // the account deleted) in that time, a match against the old one must not count.
+    if (ok && store.get(account.id)?.auth !== account.auth) ok = false;
     if (!ok) {
       log(`[auth] failed sign-in attempt from ${ip}`);
       throw new HttpError(401, 'invalid_credentials');
@@ -223,9 +232,12 @@ export async function createApp(options) {
     loginByPair.reset(client);
     loginByIp.forgive(ip);
     if (!known) loginByEmail.forgive(email);
-    knownClients.set(client, Date.now() + KNOWN_CLIENT_MS);
+    rememberClient(ip, email);
     return account;
   }
+
+  /** A session is tied to the credentials it was opened with, and dies with them. */
+  const openSession = (account) => sessions.create(account.id, account.auth.hash);
 
   const accountView = (account) => ({
     id: account.id,
@@ -242,9 +254,15 @@ export async function createApp(options) {
     return { name: 'password-vault', version: VERSION, signupsOpen: signupsOpen(), firstRun: store.accountCount === 0 };
   }
 
+  // Each credential route reads and parses its JSON body before counting the
+  // request. A page on another website can make a visitor's browser send
+  // requests here, but not with a JSON content type, so such requests are
+  // turned away without using up the visitor's allowance.
+
   async function prelogin({ ip, body }) {
+    const input = await body();
     throttleAuth(ip);
-    const email = normalizeEmail((await body()).email);
+    const email = normalizeEmail(input.email);
     if (!email) throw new HttpError(400, 'invalid_request');
     const account = store.findByEmail(email);
     if (account) return { kdf: account.kdf, salt: account.salt };
@@ -255,9 +273,9 @@ export async function createApp(options) {
   }
 
   async function register({ ip, body }) {
+    const input = await body();
     throttleAuth(ip);
     if (!signupsOpen()) throw new HttpError(403, 'signups_closed');
-    const input = await body();
     const email = normalizeEmail(input.email);
     const kdf = parseKdf(input.kdf);
     const salt = decodeBase64(input.salt, 16, 64);
@@ -281,17 +299,18 @@ export async function createApp(options) {
       throw err;
     }
     log(`[auth] account created (${store.accountCount} total)`);
-    return { token: sessions.create(account.id), account: accountView(account) };
+    rememberClient(ip, email);
+    return { token: openSession(account), account: accountView(account) };
   }
 
   async function login({ ip, body }) {
-    throttleAuth(ip);
     const input = await body();
+    throttleAuth(ip);
     const email = normalizeEmail(input.email);
     const authKey = decodeBase64(input.authKey, 32, 32);
     if (!email || !authKey) throw new HttpError(400, 'invalid_request');
     const account = await checkCredentials(ip, email, authKey);
-    return { token: sessions.create(account.id), account: accountView(account) };
+    return { token: openSession(account), account: accountView(account) };
   }
 
   function logout({ token }) {
@@ -360,8 +379,8 @@ export async function createApp(options) {
   }
 
   async function changePassword({ ip, account, body }) {
-    throttleAuth(ip);
     const input = await body();
+    throttleAuth(ip);
     const authKey = decodeBase64(input.authKey, 32, 32);
     const newAuthKey = decodeBase64(input.newAuthKey, 32, 32);
     const kdf = parseKdf(input.kdf);
@@ -377,18 +396,24 @@ export async function createApp(options) {
       draft.salt = input.salt;
       draft.protectedKey = input.protectedKey;
     });
-    // Sign out every device, then hand this one a fresh session.
+    // Sign out every device and forget which addresses were trusted under the
+    // old password, then hand this device a fresh session.
     sessions.revokeAccount(account.id);
+    forgetClients(account.email);
+    rememberClient(ip, account.email);
     log('[auth] master password changed');
-    return { token: sessions.create(account.id), account: accountView(store.get(account.id)) };
+    const updated = store.get(account.id);
+    return { token: openSession(updated), account: accountView(updated) };
   }
 
   async function deleteAccount({ ip, account, body }) {
+    const input = await body();
     throttleAuth(ip);
-    const authKey = decodeBase64((await body()).authKey, 32, 32);
+    const authKey = decodeBase64(input.authKey, 32, 32);
     if (!authKey) throw new HttpError(400, 'invalid_request');
     await checkCredentials(ip, account.email, authKey);
     sessions.revokeAccount(account.id);
+    forgetClients(account.email);
     await store.remove(account.id);
     log('[auth] account deleted');
   }
@@ -429,6 +454,11 @@ export async function createApp(options) {
       throw new HttpError(405, 'method_not_allowed');
     }
 
+    // Browsers say where a request comes from. The app only ever calls its own
+    // API, so anything sent by another website is refused outright.
+    const fetchSite = req.headers['sec-fetch-site'];
+    if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') throw new HttpError(403, 'cross_site_request');
+
     const ctx = {
       ip: clientIp(req),
       token: null,
@@ -440,11 +470,21 @@ export async function createApp(options) {
       const token = header.startsWith('Bearer ') ? header.slice(7) : null;
       const session = sessions.touch(token);
       const account = session ? store.get(session.accountId) : null;
-      if (!account) throw new HttpError(401, 'unauthorized');
+      // A session opened under an earlier master password is no longer valid.
+      if (!account || session.credential !== account.auth.hash) {
+        sessions.revoke(token);
+        throw new HttpError(401, 'unauthorized');
+      }
       ctx.token = token;
       ctx.account = account;
     }
     sendJson(res, 200, await route.handler(ctx));
+  }
+
+  /** The host name a request was addressed to, without the port: "localhost", "[::1]". */
+  function requestedHost(req) {
+    const host = String(req.headers.host || '').toLowerCase();
+    return host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.split(':')[0];
   }
 
   async function handler(req, res) {
@@ -459,6 +499,12 @@ export async function createApp(options) {
     if (isSecure(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
 
     try {
+      // When the app is only meant to be reached by certain names (by default,
+      // "localhost" when it listens on this computer only), refuse any other.
+      // This stops a hostile website from reaching it by pointing a domain
+      // name of its own at this machine ("DNS rebinding").
+      if (allowedHosts && !allowedHosts.includes(requestedHost(req))) throw new HttpError(421, 'unknown_host');
+
       let pathname;
       try {
         ({ pathname } = new URL(req.url, 'http://localhost'));

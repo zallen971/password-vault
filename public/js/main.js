@@ -83,7 +83,7 @@ vault.addEventListener('change', () => channel?.postMessage({ type: 'changed' })
 channel?.addEventListener('message', (event) => {
   // Activity in any tab counts for all of them, so an idle background tab
   // does not lock the vault while another tab is in use.
-  if (event.data?.type === 'active') lastActivity = Date.now();
+  if (event.data?.type === 'active' && !lockIfIdle()) lastActivity = Date.now();
   if (!vault.unlocked) return;
   if (event.data?.type === 'lock') vault.lock('manual');
   else if (event.data?.type === 'changed') checkForChanges();
@@ -94,7 +94,19 @@ channel?.addEventListener('message', (event) => {
 const ACTIVITY_SHARE_MS = 10_000;
 let lastShared = 0;
 
+/** Locks the vault if it has gone unused for longer than the chosen time. */
+function lockIfIdle() {
+  const minutes = Number(prefs.get('autoLockMinutes'));
+  if (!vault.unlocked || !(minutes > 0) || Date.now() - lastActivity < minutes * 60_000) return false;
+  vault.lock('idle');
+  return true;
+}
+
 function noteActivity() {
+  // Check the deadline before counting this as activity. Timers do not run
+  // while a computer sleeps or a phone app is in the background, so on waking
+  // the first click arrives before any timer has had the chance to lock.
+  if (lockIfIdle()) return;
   lastActivity = Date.now();
   if (lastActivity - lastShared >= ACTIVITY_SHARE_MS) {
     lastShared = lastActivity;
@@ -106,15 +118,17 @@ for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
   window.addEventListener(type, noteActivity, { capture: true, passive: true });
 }
 
-setInterval(() => {
-  const minutes = Number(prefs.get('autoLockMinutes'));
-  if (vault.unlocked && minutes > 0 && Date.now() - lastActivity >= minutes * 60_000) vault.lock('idle');
-}, 5000);
+setInterval(lockIfIdle, 5000);
+// Also check the moment the page is shown or focused again.
+document.addEventListener('visibilitychange', lockIfIdle);
+window.addEventListener('pageshow', lockIfIdle);
+window.addEventListener('focus', lockIfIdle);
 
 // Browsers can keep a page alive in memory after you navigate away, to make
-// the Back button instant. An unlocked vault must not linger there.
+// the Back button instant. An unlocked vault must not linger there. Only this
+// tab is leaving, so only this tab locks.
 window.addEventListener('pagehide', (event) => {
-  if (event.persisted) vault.lock('manual');
+  if (event.persisted) vault.lock('left');
 });
 
 // ---- Background sync ----

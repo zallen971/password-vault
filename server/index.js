@@ -23,9 +23,16 @@ function config() {
   const tlsCert = process.env.TLS_CERT;
   const tlsKey = process.env.TLS_KEY;
   if (Boolean(tlsCert) !== Boolean(tlsKey)) throw new Error('Set both TLS_CERT and TLS_KEY, or neither.');
+  const host = process.env.HOST || '127.0.0.1';
+  const loopback = ['127.0.0.1', '::1', 'localhost'].includes(host);
+  // Host names the app answers to. On this computer only, that is "localhost";
+  // on the network it is whatever ALLOWED_HOSTS says, or anything if unset.
+  const named = (process.env.ALLOWED_HOSTS || '').split(',').map((name) => name.trim().toLowerCase()).filter(Boolean);
+  const allowedHosts = named.length ? named : loopback ? ['localhost', '127.0.0.1', '[::1]'] : null;
   return {
     port,
-    host: process.env.HOST || '127.0.0.1',
+    host,
+    allowedHosts,
     dataDir: path.resolve(process.env.DATA_DIR || 'data'),
     allowSignups: flag('ALLOW_SIGNUPS', 'auto'),
     trustProxy: flag('TRUST_PROXY', false),

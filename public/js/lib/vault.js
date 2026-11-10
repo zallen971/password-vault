@@ -30,7 +30,7 @@ const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 
 
 /**
  * Events: "change" whenever the contents change, and "lock" when the vault is
- * locked (detail.reason is "manual", "idle", "expired" or "deleted").
+ * locked (detail.reason is "manual", "idle", "left", "expired" or "deleted").
  */
 export class Vault extends EventTarget {
   #api;
@@ -127,7 +127,7 @@ export class Vault extends EventTarget {
   lock(reason = 'manual') {
     if (!this.#session) return;
     // "expired" and "deleted" mean the server has already dropped the session.
-    this.#stop(reason === 'manual' || reason === 'idle');
+    this.#stop(reason !== 'expired' && reason !== 'deleted');
     this.dispatchEvent(new CustomEvent('lock', { detail: { reason } }));
   }
 

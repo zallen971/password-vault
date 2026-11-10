@@ -46,10 +46,11 @@ export class SessionStore {
     this.#maxMs = maxMs;
   }
 
-  create(accountId) {
+  /** `credential` identifies the credentials the session was opened with. */
+  create(accountId, credential = null) {
     const token = crypto.randomBytes(32).toString('base64url');
     const now = Date.now();
-    this.#sessions.set(sha256(token), { accountId, createdAt: now, lastSeen: now });
+    this.#sessions.set(sha256(token), { accountId, credential, createdAt: now, lastSeen: now });
     return token;
   }
 
