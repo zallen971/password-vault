@@ -417,7 +417,14 @@ export function renderApp(root, { vault, serverInfo }) {
     const subtitle = itemSubtitle(item);
     return h(
       'button.row',
-      { type: 'button', role: 'option', 'aria-selected': String(item.id === state.selectedId), 'data-id': item.id, onclick: () => select(item.id) },
+      {
+        type: 'button',
+        role: 'option',
+        'aria-selected': String(item.id === state.selectedId),
+        'data-id': item.id,
+        tabIndex: -1,
+        onclick: () => select(item.id),
+      },
       itemAvatar(item),
       h('span.row-text', h('span.row-title.truncate', displayName(item)), subtitle ? h('span.row-sub.truncate', subtitle) : null),
       item.favorite ? h('span.row-star', { title: 'Favorite' }, icon('star', 13)) : null,
@@ -542,6 +549,7 @@ export function renderApp(root, { vault, serverInfo }) {
       ),
     );
     appendRows(Math.max(PAGE_SIZE, previous?.rendered ?? 0));
+    markSelection();
     if (previous) listEl.scrollTop = previous.top;
   }
 
@@ -551,12 +559,21 @@ export function renderApp(root, { vault, serverInfo }) {
     renderList();
   }
 
+  /**
+   * Highlights the selected row. The list is a single tab stop: the selected
+   * row (or the first one) takes focus from Tab, and the arrow keys move within.
+   */
   function markSelection(reveal = false) {
+    let tabStop = null;
     for (const el of listEl.querySelectorAll('.row')) {
       const selected = el.dataset.id === state.selectedId;
       el.setAttribute('aria-selected', String(selected));
+      el.tabIndex = -1;
+      if (selected) tabStop = el;
       if (selected && reveal) el.scrollIntoView({ block: 'nearest' });
     }
+    tabStop ??= listEl.querySelector('.row');
+    if (tabStop) tabStop.tabIndex = 0;
   }
 
   listEl.addEventListener('scroll', () => {

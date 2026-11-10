@@ -528,9 +528,12 @@ async function main() {
     await page.locator('.shell').waitFor();
   });
 
+  // The next two tests control time. Playwright's fake clock belongs to the
+  // whole browser context, so they each get a context of their own.
   await step('locks automatically when idle, and clears the clipboard', async () => {
-    const timed = await newPage(context, 'timed tab');
-    await timed.clock.install();
+    const timedContext = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+    await timedContext.clock.install();
+    const timed = await newPage(timedContext, 'timed tab');
     await timed.goto(server.url);
     await unlock(timed);
     await timed.locator('.shell').waitFor();
@@ -538,19 +541,41 @@ async function main() {
     await row(timed, 'Door code').click();
     await timed.locator('.detail .field', { hasText: '4321' }).getByRole('button', { name: 'Copy note' }).click();
     assert.equal(await clipboard(timed), '4321 then #');
-    await timed.clock.fastForward(31_000);
+    await timedContext.clock.fastForward(31_000);
     await assert.doesNotReject(timed.waitForFunction(() => navigator.clipboard.readText().then((text) => text === '')));
 
-    await timed.clock.fastForward('14:00');
+    await timedContext.clock.fastForward('14:00');
     await timed.waitForTimeout(300);
     assert.equal(await timed.locator('.shell').count(), 1, 'still unlocked before the timeout');
-    await timed.clock.fastForward('02:00');
+    await timedContext.clock.fastForward('02:00');
     await timed.getByRole('heading', { name: 'Welcome back' }).waitFor();
     await timed.locator('.auth-notice', { hasText: 'inactivity' }).waitFor();
-    await timed.close();
-    // Locking is shared between tabs, so the main tab has locked as well.
-    await unlock(page);
-    await page.locator('.shell').waitFor();
+    await timedContext.close();
+  });
+
+  await step('does not lock while another tab is in use', async () => {
+    const timedContext = await browser.newContext();
+    await timedContext.clock.install();
+    const busy = await newPage(timedContext, 'busy tab');
+    const idle = await newPage(timedContext, 'idle tab');
+    for (const tab of [busy, idle]) {
+      await tab.goto(server.url);
+      await unlock(tab);
+      await tab.locator('.shell').waitFor();
+    }
+
+    await timedContext.clock.fastForward('14:00');
+    await busy.locator('.list-title').click(); // the person is working in the first tab
+    await idle.waitForTimeout(300);
+    await timedContext.clock.fastForward('02:00'); // 16 minutes since the idle tab was last touched
+    await idle.waitForTimeout(600);
+    assert.equal(await idle.locator('.shell').count(), 1, 'activity in one tab keeps the others unlocked');
+    assert.equal(await busy.locator('.shell').count(), 1);
+
+    await timedContext.clock.fastForward('16:00'); // now nobody has touched anything
+    await idle.getByRole('heading', { name: 'Welcome back' }).waitFor();
+    await busy.getByRole('heading', { name: 'Welcome back' }).waitFor();
+    await timedContext.close();
   });
 
   console.log('\nImport and export');

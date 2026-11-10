@@ -961,9 +961,11 @@ input[type="checkbox"]:not(.switch input) {
   color: var(--text-3);
 }
 
-.nav-item:hover {
-  background: color-mix(in srgb, var(--text) 6%, transparent);
-  color: var(--text);
+@media (hover: hover) {
+  .nav-item:hover {
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+    color: var(--text);
+  }
 }
 
 .nav-item[aria-current="true"] {
@@ -1180,8 +1182,16 @@ input[type="checkbox"]:not(.switch input) {
   transition: background-color 0.08s;
 }
 
-.row:hover {
-  background: var(--surface-2);
+.row:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Hover feedback only where there is a real pointer: on touch screens a
+   "hover" sticks to the last thing tapped. */
+@media (hover: hover) {
+  .row:hover {
+    background: var(--surface-2);
+  }
 }
 
 .row[aria-selected="true"] {
@@ -1498,8 +1508,10 @@ input[type="checkbox"]:not(.switch input) {
   cursor: pointer;
 }
 
-.field.is-copyable:hover {
-  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+@media (hover: hover) {
+  .field.is-copyable:hover {
+    background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  }
 }
 
 .field:first-child {
@@ -2614,6 +2626,11 @@ dialog.dialog::backdrop {
 
   .nav-row .nav-count {
     visibility: hidden;
+  }
+
+  /* No keyboard, so no keyboard hint. */
+  .search-end kbd {
+    display: none;
   }
 
   .affix > .input {

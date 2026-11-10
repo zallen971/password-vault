@@ -76,6 +76,9 @@ vault.addEventListener('lock', (event) => {
 vault.addEventListener('change', () => channel?.postMessage({ type: 'changed' }));
 
 channel?.addEventListener('message', (event) => {
+  // Activity in any tab counts for all of them, so an idle background tab
+  // does not lock the vault while another tab is in use.
+  if (event.data?.type === 'active') lastActivity = Date.now();
   if (!vault.unlocked) return;
   if (event.data?.type === 'lock') vault.lock('manual');
   else if (event.data?.type === 'changed') checkForChanges();
@@ -83,8 +86,19 @@ channel?.addEventListener('message', (event) => {
 
 // ---- Auto-lock ----
 
+const ACTIVITY_SHARE_MS = 10_000;
+let lastShared = 0;
+
+function noteActivity() {
+  lastActivity = Date.now();
+  if (lastActivity - lastShared >= ACTIVITY_SHARE_MS) {
+    lastShared = lastActivity;
+    channel?.postMessage({ type: 'active' });
+  }
+}
+
 for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
-  window.addEventListener(type, () => (lastActivity = Date.now()), { capture: true, passive: true });
+  window.addEventListener(type, noteActivity, { capture: true, passive: true });
 }
 
 setInterval(() => {

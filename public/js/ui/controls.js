@@ -94,8 +94,13 @@ export function passwordInput({ id, autocomplete, placeholder = '', large = fals
 
 /** Four-segment strength bar. Call update() with a password, or with a ready-made result. */
 export function strengthMeter() {
-  const label = h('span.meter-label');
-  const el = h('div.meter', { 'data-empty': '', role: 'status', 'aria-live': 'polite' }, h('div.meter-bars', h('i'), h('i'), h('i'), h('i')), label);
+  const label = h('span');
+  const el = h(
+    'div.meter',
+    { 'data-empty': '', role: 'status', 'aria-live': 'polite' },
+    h('div.meter-bars', { 'aria-hidden': 'true' }, h('i'), h('i'), h('i'), h('i')),
+    h('span.meter-label', h('span.sr-only', 'Password strength: '), label),
+  );
   return {
     el,
     update(input) {
