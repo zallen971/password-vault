@@ -434,6 +434,7 @@ export async function createApp(options) {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     if (isSecure(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
 
     try {

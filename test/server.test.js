@@ -478,6 +478,7 @@ describe('web app delivery', () => {
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(response.headers.get('x-frame-options'), 'DENY');
     assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+    assert.match(response.headers.get('x-robots-tag'), /noindex/);
     assert.equal(response.headers.get('cache-control'), 'no-cache');
     assert.equal(response.headers.get('strict-transport-security'), null, 'no HSTS over plain http');
   });
