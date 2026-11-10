@@ -146,7 +146,7 @@ function fromBitwardenJson(data) {
 // ---- CSV ----
 
 // Column names used by Bitwarden, Chrome, Edge, Firefox, Safari, 1Password,
-// LastPass, Dashlane, KeePass and NordPass, most specific first.
+// LastPass, Dashlane, KeePass, NordPass and Proton Pass, most specific first.
 const COLUMNS = {
   name: ['name', 'title', 'account', 'item name', 'entry'],
   url: ['login_uri', 'url', 'uri', 'website', 'web site', 'login url', 'web address', 'site'],
@@ -154,33 +154,58 @@ const COLUMNS = {
   password: ['login_password', 'password', 'pass', 'pwd'],
   notes: ['notes', 'note', 'extra', 'comments', 'comment'],
   totp: ['login_totp', 'totp', 'otpauth', 'otpsecret', 'otp secret', 'otp', 'two factor secret'],
-  folder: ['folder', 'grouping', 'group', 'category'],
+  folder: ['folder', 'grouping', 'group', 'category', 'collections', 'vault'],
   favorite: ['favorite', 'favourite', 'fav'],
 };
 
+// Bookkeeping columns that are not worth keeping.
+const IGNORED_COLUMNS = new Set([
+  'type', 'reprompt', 'archived', 'icon', 'guid', 'id', 'uuid', 'httprealm', 'formactionorigin', 'timecreated', 'timelastused',
+  'timepasswordchanged', 'createtime', 'modifytime', 'created', 'modified', 'last modified',
+]);
+const SECRET_COLUMN = /pass|secret|cvc|cvv|^pin$|ssn|token|card.?number|private|security.?code/;
+const fieldName = (header) => header.charAt(0).toUpperCase() + header.slice(1).replace(/_/g, ' ');
+
 function fromCsv(source) {
   const { headers, records } = parseCsvRecords(source);
-  const column = Object.fromEntries(
-    Object.entries(COLUMNS).map(([key, aliases]) => [key, aliases.find((alias) => headers.includes(alias)) ?? null]),
-  );
-  if (!column.password && !column.username && !column.url && !column.notes) {
+  const present = Object.fromEntries(Object.entries(COLUMNS).map(([key, aliases]) => [key, aliases.filter((alias) => headers.includes(alias))]));
+  if (!present.password.length && !present.username.length && !present.url.length && !present.notes.length) {
     throw new ImportError(
       'Could not find any recognizable columns. The first row must name the columns, ' +
         'for example: name, url, username, password, notes.',
     );
   }
   const isBitwarden = headers.includes('login_uri') || headers.includes('login_password');
-  const get = (record, key) => (column[key] ? text(record[column[key]]) : '');
 
   const items = [];
   for (const record of records) {
-    const url = get(record, 'url').trim();
-    const username = get(record, 'username');
-    const password = get(record, 'password');
-    const notes = get(record, 'notes');
-    const totp = get(record, 'totp').trim();
-    let name = get(record, 'name').trim();
-    if (!name && !url && !username && !password && !notes) continue;
+    // For each kind of value, use the first matching column that is filled in
+    // on this row ("username" may be empty where "email" is not).
+    const used = new Set();
+    const get = (key) => {
+      const header = present[key].find((candidate) => text(record[candidate]).trim() !== '');
+      if (!header) return '';
+      used.add(header);
+      return text(record[header]);
+    };
+    const url = get('url').trim();
+    const username = get('username');
+    const password = get('password');
+    const notes = get('notes');
+    const totp = get('totp').trim();
+    let name = get('name').trim();
+    const favorite = truthy(get('favorite'));
+    const folderName = get('folder').trim();
+
+    // Anything else on the row is kept as a custom field rather than dropped,
+    // so cards, PINs and the like from other managers are not silently lost.
+    const fields = isBitwarden
+      ? bitwardenCsvFields(record.fields)
+      : headers
+          .filter((header) => header && !used.has(header) && !IGNORED_COLUMNS.has(header) && text(record[header]).trim() !== '')
+          .map((header) => ({ name: fieldName(header), value: text(record[header]), type: SECRET_COLUMN.test(header) ? 'hidden' : 'text' }));
+
+    if (!name && !url && !username && !password && !notes && !totp && !fields.length) continue; // an empty row
 
     // Bitwarden marks notes with type "note"; LastPass with the placeholder URL "http://sn".
     const isNote =
@@ -188,14 +213,7 @@ function fromCsv(source) {
       url === 'http://sn' ||
       (!url && !username && !password && !totp);
 
-    const item = {
-      type: isNote ? 'note' : 'login',
-      name,
-      notes,
-      favorite: truthy(get(record, 'favorite')),
-      folderName: get(record, 'folder').trim(),
-      fields: isBitwarden ? bitwardenCsvFields(record.fields) : [],
-    };
+    const item = { type: isNote ? 'note' : 'login', name, notes, favorite, folderName, fields };
     if (!isNote) {
       // Bitwarden writes several addresses for one login as a comma-separated list.
       const uris = isBitwarden ? url.split(',').map((part) => part.trim()) : [url];

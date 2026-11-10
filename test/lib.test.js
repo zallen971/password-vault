@@ -645,6 +645,51 @@ describe('import and export', () => {
     assert.equal(safari.items[0].login.username, 'frank');
   });
 
+  test('keeps columns it does not recognize instead of dropping them', () => {
+    const nordpass = parseImport(
+      [
+        'name,url,username,password,note,cardholdername,cardnumber,cvc,expirydate,folder,email,phone_number,type',
+        'Shop,https://shop.example,,pw-1,,,,,,Shopping,carol@example.com,,password',
+        'Visa,,,,,Carol Jones,4111111111111111,123,08/29,Cards,,,credit_card',
+        'Contact,,,,,,,,,,dan@example.com,+1 555 0100,identity',
+        ',,,,,,,,,,,,',
+      ].join('\n'),
+    );
+    const [shop, card, contact] = nordpass.items;
+    assert.equal(nordpass.items.length, 3, 'the empty row is skipped, the others are all kept');
+
+    // "username" is empty on this row, so the email column is used for it.
+    assert.equal(shop.login.username, 'carol@example.com');
+    assert.deepEqual(shop.fields, []);
+
+    assert.equal(card.type, 'note');
+    assert.equal(card.name, 'Visa');
+    assert.equal(card.folderName, 'Cards');
+    assert.deepEqual(card.fields, [
+      { name: 'Cardholdername', value: 'Carol Jones', type: 'text' },
+      { name: 'Cardnumber', value: '4111111111111111', type: 'hidden' },
+      { name: 'Cvc', value: '123', type: 'hidden' },
+      { name: 'Expirydate', value: '08/29', type: 'text' },
+    ]);
+
+    // A row with only an email is a login for that address; the rest is kept as fields.
+    assert.equal(contact.type, 'login');
+    assert.equal(contact.login.username, 'dan@example.com');
+    assert.deepEqual(contact.fields, [{ name: 'Phone number', value: '+1 555 0100', type: 'text' }]);
+
+    // When both a username and an email are filled in, neither is lost.
+    const proton = parseImport('type,name,url,email,username,password,note,totp,createTime,modifyTime,vault\nlogin,Forum,https://forum.example,erin@example.com,erin42,pw,,,1700000000,1700000001,Personal');
+    assert.equal(proton.items[0].login.username, 'erin42');
+    assert.deepEqual(proton.items[0].fields, [{ name: 'Email', value: 'erin@example.com', type: 'text' }]);
+    assert.equal(proton.items[0].folderName, 'Personal');
+
+    // Browser bookkeeping columns are not turned into fields.
+    const firefox = parseImport('url,username,password,httpRealm,formActionOrigin,guid,timeCreated,timeLastUsed,timePasswordChanged\nhttps://a.example,bob,pw,,https://a.example,{abc},1,2,3');
+    assert.deepEqual(firefox.items[0].fields, []);
+    const onePassword = parseImport('Title,Url,Username,Password,OTPAuth,Favorite,Archived,Tags,Notes\nBank,https://bank.example,dave,pw,,true,false,finance,memo');
+    assert.deepEqual(onePassword.items[0].fields, [{ name: 'Tags', value: 'finance', type: 'text' }]);
+  });
+
   const sampleVault = () => {
     const folder = normalizeFolder({ name: 'Work' });
     const items = [
