@@ -496,6 +496,27 @@ async function main() {
     assert.equal(await page.locator('.editor-head').count(), 0);
   });
 
+  await step('keeps an edit safe when the connection drops', async () => {
+    await row(page, 'Door code').click();
+    await page.getByRole('button', { name: 'Edit' }).click();
+    await page.getByLabel('Notes').fill('typed while offline');
+    await context.setOffline(true);
+    await page.getByRole('button', { name: 'Save' }).click();
+    await sawToast(page, 'Can’t reach the server');
+    assert.equal(await page.getByLabel('Notes').inputValue(), 'typed while offline', 'nothing typed is lost');
+    assert.equal(await page.getByRole('button', { name: 'Save' }).isEnabled(), true, 'saving can be tried again');
+
+    await context.setOffline(false);
+    await page.getByRole('button', { name: 'Save' }).click();
+    await sawToast(page, 'Changes saved');
+    assert.equal(await field(page, 'Note').locator('.field-value').textContent(), 'typed while offline');
+
+    await page.getByRole('button', { name: 'Edit' }).click();
+    await page.getByLabel('Notes').fill('4321 then #');
+    await page.getByRole('button', { name: 'Save' }).click();
+    await sawToast(page, 'Changes saved');
+  });
+
   await step('duplicates an item', async () => {
     await row(page, 'GitHub').click();
     await page.getByRole('button', { name: 'More actions' }).click();
@@ -994,9 +1015,9 @@ async function main() {
   });
 
   await step('raised no console errors or security-policy violations', async () => {
-    // Rejected sign-ins legitimately log a 401, and the simulated breach-service
-    // outage logs a failed request; nothing else may appear.
-    const expected = /Failed to load resource: (the server responded with a status of (401|429)|net::ERR_FAILED)/;
+    // Rejected sign-ins legitimately log a 401, and the simulated outages (the
+    // breach service, and going offline) log failed requests; nothing else may appear.
+    const expected = /Failed to load resource: (the server responded with a status of (401|429)|net::ERR_FAILED|net::ERR_INTERNET_DISCONNECTED)/;
     const unexpected = problems.filter((problem) => !expected.test(problem));
     assert.deepEqual(unexpected, []);
   });
