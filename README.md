@@ -131,6 +131,8 @@ Losing the `data` folder means losing your vault, so back it up. Three layers ar
 - **The page is locked down** with a strict Content Security Policy: no inline scripts, no third-party code, no frames. Vault contents are only ever inserted into the page as text, never as markup.
 - **Keys and decrypted items live in memory only**, and are discarded when the vault locks or the tab closes. The browser remembers nothing but your display preferences and, if you allow it, your email address.
 
+Copied passwords are wiped from the clipboard after 30 seconds (you can change this). Browsers limit what a web page may do to the clipboard: Chrome and Edge allow the wipe while Vault is the active window, and otherwise it happens as soon as you return to Vault; Safari and Firefox only allow it when you next click or type in Vault.
+
 The breached-password check is optional and only runs when you ask for it. It uses the [Have I Been Pwned](https://haveibeenpwned.com/Passwords) range service: each password is hashed on your device and only the first 5 characters of the hash are sent, never a password.
 
 ### What this does not protect against

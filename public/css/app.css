@@ -1126,7 +1126,13 @@ input[type="checkbox"]:not(.switch input) {
   background: var(--surface);
 }
 
-.search .input::-webkit-search-cancel-button {
+.search .input {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.search .input::-webkit-search-cancel-button,
+.search .input::-webkit-search-decoration {
   display: none;
 }
 
@@ -1639,6 +1645,7 @@ input[type="checkbox"]:not(.switch input) {
   padding: 14px 32px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 86%, transparent);
+  -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
 }
 
@@ -1737,6 +1744,7 @@ dialog.dialog {
 
 dialog.dialog::backdrop {
   background: var(--scrim);
+  -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
   animation: fade 0.18s ease both;
 }
