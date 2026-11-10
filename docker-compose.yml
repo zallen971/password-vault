@@ -12,6 +12,8 @@ services:
     environment:
       # Caddy sits in front, so take the visitor's address and scheme from it.
       TRUST_PROXY: "true"
+      # Answer only to your domain (plus localhost, for the container's own health check).
+      ALLOWED_HOSTS: "${VAULT_DOMAIN},localhost,127.0.0.1"
       # Sign-ups close once the first account exists. Uncomment to add more people.
       # ALLOW_SIGNUPS: "true"
     volumes:
