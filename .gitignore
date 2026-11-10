@@ -1,0 +1,20 @@
+# Vault data (encrypted, but it does not belong in git)
+/data/
+
+# Dependencies and tooling
+node_modules/
+npm-debug.log*
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local TLS material and environment files
+*.pem
+.env
+.env.*
+
+# Test output
+/test/e2e/output/
