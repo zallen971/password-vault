@@ -18,6 +18,8 @@ function flag(name, fallback) {
 function config() {
   const port = Number(process.env.PORT ?? 8787);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`PORT is not a valid port: ${process.env.PORT}`);
+  const backupDays = Number(process.env.BACKUP_DAYS ?? 14);
+  if (!Number.isInteger(backupDays) || backupDays < 0) throw new Error(`BACKUP_DAYS must be a whole number of days: ${process.env.BACKUP_DAYS}`);
   const tlsCert = process.env.TLS_CERT;
   const tlsKey = process.env.TLS_KEY;
   if (Boolean(tlsCert) !== Boolean(tlsKey)) throw new Error('Set both TLS_CERT and TLS_KEY, or neither.');
@@ -27,6 +29,7 @@ function config() {
     dataDir: path.resolve(process.env.DATA_DIR || 'data'),
     allowSignups: flag('ALLOW_SIGNUPS', 'auto'),
     trustProxy: flag('TRUST_PROXY', false),
+    backupDays,
     tls: tlsCert ? { cert: readFileSync(tlsCert), key: readFileSync(tlsKey) } : null,
   };
 }

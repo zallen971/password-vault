@@ -128,7 +128,35 @@ export function renderApp(root, { vault, serverInfo }) {
     });
   }
 
-  const showPane = (pane) => (shell.dataset.pane = pane);
+  // On narrow screens the list and the detail view take turns filling the
+  // screen. Opening the detail view adds a history entry, so the browser's
+  // Back button (or the Android back gesture) returns to the list instead of
+  // leaving the app.
+  const singlePane = matchMedia('(max-width: 860px)');
+  const DETAIL_ENTRY = 'vault-detail';
+
+  function showPane(pane) {
+    if (shell.dataset.pane === pane) return;
+    shell.dataset.pane = pane;
+    if (pane === 'detail') {
+      if (singlePane.matches) history.pushState(DETAIL_ENTRY, '');
+    } else if (history.state === DETAIL_ENTRY) {
+      history.back();
+    }
+  }
+
+  function onPopState() {
+    if (shell.dataset.pane !== 'detail') return; // we went back ourselves
+    if (state.editor) {
+      // Leaving an open editor is a step of its own: stay on this level and
+      // close it (asking first if there are unsaved changes).
+      history.pushState(DETAIL_ENTRY, '');
+      cancelEdit();
+      return;
+    }
+    shell.dataset.pane = 'list';
+  }
+
   const closeNav = () => shell.classList.remove('is-nav-open');
 
   // ---- Actions ----
@@ -195,11 +223,9 @@ export function renderApp(root, { vault, serverInfo }) {
   }
 
   async function cancelEdit() {
-    if (!(await leaveEditor())) return;
-    const wasNew = state.editor.isNew;
+    if (!state.editor || !(await leaveEditor())) return;
     state.editor = null;
-    renderDetail(true);
-    if (wasNew && !state.selectedId) showPane('list');
+    renderDetail(true); // falls back to the list when there is nothing to show
   }
 
   async function trashItem(item) {
@@ -680,6 +706,7 @@ export function renderApp(root, { vault, serverInfo }) {
   vault.addEventListener('change', onVaultChange);
   document.addEventListener('keydown', onKeydown);
   window.addEventListener('beforeunload', onBeforeUnload);
+  window.addEventListener('popstate', onPopState);
 
   mount(root, shell);
   renderNav();
@@ -690,6 +717,8 @@ export function renderApp(root, { vault, serverInfo }) {
     vault.removeEventListener('change', onVaultChange);
     document.removeEventListener('keydown', onKeydown);
     window.removeEventListener('beforeunload', onBeforeUnload);
+    window.removeEventListener('popstate', onPopState);
+    if (history.state === DETAIL_ENTRY) history.back();
     disposeDetail?.();
     state.editor = null;
     mount(root);

@@ -1,0 +1,34 @@
+# Vault behind Caddy, which obtains and renews an HTTPS certificate for you.
+#
+#   VAULT_DOMAIN=vault.example.com docker compose up -d
+#
+# Point the domain's DNS at this machine and open ports 80 and 443 first.
+# To try Vault on this computer only, you do not need this file: see the README.
+
+services:
+  vault:
+    build: .
+    restart: unless-stopped
+    environment:
+      # Caddy sits in front, so take the visitor's address and scheme from it.
+      TRUST_PROXY: "true"
+      # Sign-ups close once the first account exists. Uncomment to add more people.
+      # ALLOW_SIGNUPS: "true"
+    volumes:
+      - vault-data:/data
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - vault
+    ports:
+      - "80:80"
+      - "443:443"
+    command: caddy reverse-proxy --from ${VAULT_DOMAIN:?Set VAULT_DOMAIN to the domain name people will use} --to vault:8787
+    volumes:
+      - caddy-data:/data
+
+volumes:
+  vault-data:
+  caddy-data:

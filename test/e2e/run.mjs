@@ -815,6 +815,23 @@ async function main() {
     await mobile.getByRole('button', { name: 'Back' }).click();
     assert.equal(await mobile.locator('.detail-pane').isVisible(), false);
 
+    // The browser's own Back button returns to the list too, instead of leaving the app.
+    await row(mobile, 'GitHub').first().click();
+    await mobile.locator('.detail-title', { hasText: 'GitHub' }).waitFor();
+    await mobile.goBack();
+    await mobile.locator('.detail-pane').waitFor({ state: 'hidden' });
+    assert.equal(await mobile.locator('.shell').count(), 1, 'still unlocked and on the same page');
+
+    // Back from an open editor closes the editor first, then the item.
+    await row(mobile, 'GitHub').first().click();
+    await mobile.getByRole('button', { name: 'Edit' }).click();
+    await mobile.getByLabel('Name', { exact: true }).waitFor();
+    await mobile.goBack();
+    await mobile.locator('.detail-title', { hasText: 'GitHub' }).waitFor();
+    await mobile.goBack();
+    await mobile.locator('.detail-pane').waitFor({ state: 'hidden' });
+    assert.equal(await mobile.locator('.shell').count(), 1);
+
     await mobile.getByRole('button', { name: 'Open menu' }).click();
     await navItem(mobile, 'Cards').click();
     assert.equal(await mobile.locator('.list-title').textContent(), 'Cards');
