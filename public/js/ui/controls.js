@@ -119,10 +119,13 @@ export function strengthMeter() {
   };
 }
 
-/** An on/off switch. */
-export function toggle({ checked = false, label, onchange }) {
-  const input = h('input', { type: 'checkbox', checked, 'aria-label': label, onchange: () => onchange?.(input.checked) });
-  return { el: h('label.switch', input, h('span')), input };
+/**
+ * An on/off switch. Pass `standalone: false` when it sits inside a <label>
+ * that already names it, since labels must not be nested.
+ */
+export function toggle({ checked = false, label, onchange, standalone = true }) {
+  const input = h('input', { type: 'checkbox', checked, 'aria-label': standalone ? label : null, onchange: () => onchange?.(input.checked) });
+  return { el: h(standalone ? 'label.switch' : 'span.switch', input, h('span')), input };
 }
 
 /** Text with digits and symbols tinted, so similar characters are easy to tell apart. */

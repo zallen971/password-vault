@@ -69,7 +69,7 @@ export function openGenerator({ copy, onUse }) {
   function option(label, sample, options, key, wide = false) {
     const control = toggle({
       checked: options[key],
-      label,
+      standalone: false, // the surrounding <label> names it
       onchange: (on) => {
         options[key] = on;
         // At least one kind of character has to stay switched on.
