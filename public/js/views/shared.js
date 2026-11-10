@@ -5,7 +5,7 @@ import { TYPE_INFO, displayName } from '../lib/model.js';
 
 const TYPE_HUES = { note: 38, card: 162, identity: 262 };
 
-/** The coloured tile shown beside an item: its initial for logins, an icon otherwise. */
+/** The colored tile shown beside an item: its initial for logins, an icon otherwise. */
 export function itemAvatar(item, { large = false } = {}) {
   const name = displayName(item);
   const initial = item.type === 'login' ? [...name].find((char) => /[\p{L}\p{N}]/u.test(char)) : null;

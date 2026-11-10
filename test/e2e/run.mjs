@@ -366,7 +366,7 @@ async function main() {
     await sawToast(page, 'Moved to trash');
   });
 
-  console.log('\nOrganising');
+  console.log('\nOrganizing');
 
   await step('searches, and focuses search with "/"', async () => {
     await page.locator('.list-title').click();
@@ -657,8 +657,8 @@ async function main() {
       buffer: Buffer.from('{"encrypted":true,"passwordProtected":true,"data":"2.abc|def|ghi"}'),
     });
     await settings.locator('.auth-error', { hasText: 'can only be opened by Bitwarden' }).waitFor();
-    await settings.locator('input[type=file]').setInputFiles({ name: 'photo.csv', mimeType: 'text/csv', buffer: Buffer.from('colour,size\nred,large\n') });
-    await settings.locator('.auth-error', { hasText: 'Could not find any recognisable columns' }).waitFor();
+    await settings.locator('input[type=file]').setInputFiles({ name: 'photo.csv', mimeType: 'text/csv', buffer: Buffer.from('color,size\nred,large\n') });
+    await settings.locator('.auth-error', { hasText: 'Could not find any recognizable columns' }).waitFor();
     await page.keyboard.press('Escape');
   });
 

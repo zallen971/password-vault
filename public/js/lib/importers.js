@@ -165,7 +165,7 @@ function fromCsv(source) {
   );
   if (!column.password && !column.username && !column.url && !column.notes) {
     throw new ImportError(
-      'Could not find any recognisable columns. The first row must name the columns, ' +
+      'Could not find any recognizable columns. The first row must name the columns, ' +
         'for example: name, url, username, password, notes.',
     );
   }

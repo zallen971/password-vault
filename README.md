@@ -185,4 +185,4 @@ npm install --no-save playwright && npx playwright install chromium
 
 ## Credits
 
-Passphrases are generated from the [EFF Large Wordlist](https://www.eff.org/dice) by the Electronic Frontier Foundation, used under the [Creative Commons Attribution 3.0 US](https://creativecommons.org/licenses/by/3.0/us/) licence.
+Passphrases are generated from the [EFF Large Wordlist](https://www.eff.org/dice) by the Electronic Frontier Foundation, used under the [Creative Commons Attribution 3.0 US](https://creativecommons.org/licenses/by/3.0/us/) license.

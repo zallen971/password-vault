@@ -560,7 +560,7 @@ input[type="checkbox"]:not(.switch input) {
   accent-color: var(--accent);
 }
 
-/* Strength meter: four segments that fill and change colour with the score. */
+/* Strength meter: four segments that fill and change color with the score. */
 .meter {
   display: flex;
   align-items: center;
@@ -744,7 +744,7 @@ input[type="checkbox"]:not(.switch input) {
     var(--bg);
 }
 
-/* Auto margins centre the card when there is room, and let it start at the
+/* Auto margins center the card when there is room, and let it start at the
    top (still scrollable) when the screen is shorter than the card. */
 .auth > :first-child {
   margin-top: auto;
@@ -1532,7 +1532,7 @@ input[type="checkbox"]:not(.switch input) {
   border-radius: 13px;
 }
 
-/* Revealed passwords colour digits and symbols so they are easy to tell apart. */
+/* Revealed passwords color digits and symbols so they are easy to tell apart. */
 .pw-digit {
   color: var(--digit);
 }

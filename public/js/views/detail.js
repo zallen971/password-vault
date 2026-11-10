@@ -211,7 +211,7 @@ export function itemView({ item, folderName, animate, actions }) {
         card([
           valueRow({ label: 'Social Security / national ID number', value: id.ssn, mono: true, secret: true }),
           valueRow({ label: 'Passport number', value: id.passportNumber, mono: true, secret: true }),
-          valueRow({ label: 'Licence number', value: id.licenseNumber, mono: true, secret: true }),
+          valueRow({ label: 'License number', value: id.licenseNumber, mono: true, secret: true }),
         ]),
       ),
       titled('Address', card([valueRow({ label: 'Address', value: address, pre: true })])),

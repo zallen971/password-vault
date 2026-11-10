@@ -79,7 +79,7 @@ const SHAPES = {
   g: (points) => ['polygon', { points: points.join(' ') }],
 };
 
-/** An inline SVG icon that inherits the current text colour. */
+/** An inline SVG icon that inherits the current text color. */
 export function icon(name, size = 16) {
   const shapes = ICONS[name];
   if (!shapes) throw new Error(`Unknown icon: ${name}`);
@@ -122,7 +122,7 @@ export function iconButton(name, label, { size = 16, ...props } = {}) {
 
 const HUES = [4, 24, 38, 142, 162, 187, 205, 221, 243, 262, 292, 330];
 
-/** A stable colour for a piece of text, so each item keeps its own tint. */
+/** A stable color for a piece of text, so each item keeps its own tint. */
 export function hueFor(text) {
   let hash = 0;
   for (const char of String(text)) hash = (hash * 31 + char.codePointAt(0)) >>> 0;

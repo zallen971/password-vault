@@ -66,7 +66,7 @@ describe('vault', () => {
   });
 
   test('the server only ever stores ciphertext', async () => {
-    const secret = login('Very Recognisable Name', {
+    const secret = login('Very Recognizable Name', {
       username: 'needle-username',
       password: 'needle-password-9431',
       uris: ['https://needle-site.test/login'],
@@ -79,7 +79,7 @@ describe('vault', () => {
     const dir = path.join(server.dataDir, 'accounts');
     const [file] = await readdir(dir);
     const stored = await readFile(path.join(dir, file), 'utf8');
-    for (const needle of ['Recognisable', 'needle', 'S3cret', 'https://', 'login', 'folder', PASSWORD]) {
+    for (const needle of ['Recognizable', 'needle', 'S3cret', 'https://', 'login', 'folder', PASSWORD]) {
       assert.ok(!stored.includes(needle), `"${needle}" is readable on the server`);
     }
     assert.ok(stored.includes(EMAIL), 'only the account address is stored in the clear');
@@ -144,7 +144,7 @@ describe('vault', () => {
     assert.equal(vault.item(item.id).folderId, null, 'items move out of a deleted folder');
   });
 
-  test('favourites', async () => {
+  test('favorites', async () => {
     const item = await vault.saveItem(login('Starred'));
     await vault.setFavorite(item.id, true);
     assert.equal(vault.item(item.id).favorite, true);

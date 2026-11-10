@@ -48,7 +48,7 @@ export function itemEditor({ item, isNew, vault, onDirty, onSave, onCancel, crea
     return h('div', { class: wide ? 'span-2' : '' }, h('label.label', { for: id }, label), control, hint ?? null);
   }
 
-  // ---- Name, folder, favourite ----
+  // ---- Name, folder, favorite ----
 
   const nameId = nextId('name');
   const nameInput = textInput(item, 'name', {

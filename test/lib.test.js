@@ -74,7 +74,7 @@ describe('crypto', () => {
     await assert.rejects(vaultCrypto.decryptBytes(impostor, sealed, 'ctx'));
   });
 
-  test('unicode passwords are normalised before use', async () => {
+  test('unicode passwords are normalized before use', async () => {
     const salt = vaultCrypto.toBase64(vaultCrypto.randomBytes(16));
     const composed = await vaultCrypto.deriveLoginKeys('café', salt, FAST_KDF);
     const decomposed = await vaultCrypto.deriveLoginKeys('café', salt, FAST_KDF);
@@ -320,7 +320,7 @@ describe('strength', () => {
     return hits / samples;
   };
 
-  test('recognises generated passwords as strong', () => {
+  test('recognizes generated passwords as strong', () => {
     assert.ok(rate(() => generatePassword({ length: 20 }), 4) >= 0.99);
     assert.ok(rate(() => generatePassword({ length: 16 }), 4) >= 0.97);
     assert.ok(rate(() => generatePassword({ length: 12 }), 3) >= 0.95);
@@ -591,7 +591,7 @@ describe('import and export', () => {
     assert.throws(() => parseImport('{"hello": "world"}'), ImportError);
     assert.throws(() => parseImport('{"items": '), ImportError);
     assert.throws(() => parseImport('[1,2,3]'), ImportError);
-    assert.throws(() => parseImport('colour,size\nred,large'), ImportError);
+    assert.throws(() => parseImport('color,size\nred,large'), ImportError);
     assert.throws(() => parseImport('name,url,username,password'), ImportError);
   });
 

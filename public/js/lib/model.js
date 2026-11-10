@@ -36,7 +36,7 @@ export const IDENTITY_FIELDS = Object.freeze([
   { key: 'phone', label: 'Phone', half: true, inputMode: 'tel' },
   { key: 'ssn', label: 'Social Security / national ID number', secret: true, mono: true },
   { key: 'passportNumber', label: 'Passport number', secret: true, mono: true, half: true },
-  { key: 'licenseNumber', label: 'Licence number', secret: true, mono: true, half: true },
+  { key: 'licenseNumber', label: 'License number', secret: true, mono: true, half: true },
   { key: 'address1', label: 'Address line 1' },
   { key: 'address2', label: 'Address line 2' },
   { key: 'address3', label: 'Address line 3' },

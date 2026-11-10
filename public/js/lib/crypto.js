@@ -159,7 +159,7 @@ export async function encryptBytes(key, plaintext, context) {
 export async function decryptBytes(key, blobBase64, context) {
   const blob = fromBase64(blobBase64);
   if (blob.length < 1 + IV_BYTES + TAG_BYTES || blob[0] !== BLOB_VERSION) {
-    throw new Error('Unrecognised or damaged ciphertext');
+    throw new Error('Unrecognized or damaged ciphertext');
   }
   const plaintext = await crypto.subtle.decrypt(
     { name: 'AES-GCM', iv: blob.subarray(1, 1 + IV_BYTES), additionalData: encoder.encode(context) },

@@ -212,6 +212,29 @@ describe('vault sync', () => {
     }
   });
 
+  test('simultaneous writes are all applied, one after another', async () => {
+    const start = (await vault()).revision;
+    const records = Array.from({ length: 30 }, () => ({ id: uuid(), data: fakeRecord(), baseRev: null }));
+    const responses = await Promise.all(records.map((record) => sync({ upserts: [record] })));
+    assert.ok(responses.every((response) => response.status === 200));
+    const revisions = responses.map((response) => response.body.revision).sort((a, b) => a - b);
+    assert.deepEqual(revisions, Array.from({ length: 30 }, (_, index) => start + index + 1), 'every write gets its own revision');
+
+    const after = await vault();
+    assert.equal(after.revision, start + 30);
+    for (const record of records) {
+      assert.equal(after.records.find((stored) => stored.id === record.id)?.data, record.data);
+    }
+
+    // What is on disk matches what was acknowledged.
+    const dir = path.join(server.dataDir, 'accounts');
+    const [file] = await readdir(dir);
+    const onDisk = JSON.parse(await readFile(path.join(dir, file), 'utf8'));
+    assert.equal(onDisk.revision, after.revision);
+    assert.equal(Object.keys(onDisk.records).length, after.records.length);
+    await sync({ deletes: after.records.map(({ id, rev }) => ({ id, baseRev: rev })) });
+  });
+
   test('accounts cannot see or touch each other', async () => {
     const shared = await startServer({ allowSignups: true });
     try {
@@ -481,7 +504,7 @@ describe('web app delivery', () => {
       '/js',
     ];
     for (const attempt of attempts) {
-      // Use a raw request so the client does not normalise the path first.
+      // Use a raw request so the client does not normalize the path first.
       const { status, body } = await rawGet(server.url, attempt);
       assert.equal(status, 404, attempt);
       assert.ok(!body.includes('"scripts"') && !body.includes('createApp'), attempt);
