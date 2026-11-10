@@ -290,8 +290,9 @@ export function estimateStrength(password) {
   const decoration = commonDecoration(text);
   if (decoration !== null) bits = Math.min(bits, 6 + 2.5 * decoration);
 
-  // The same thing typed several times over: "abc123abc123".
-  const repeated = /^(.+?)\1+$/su.exec(text);
+  // The same thing typed several times over: "abc123abc123". (Skipped for very
+  // long input, where the search would be slow and the answer is not in doubt.)
+  const repeated = text.length <= 256 ? /^(.+?)\1+$/su.exec(text) : null;
   if (repeated) bits = Math.min(bits, estimateStrength(repeated[1]).bits + Math.log2(text.length / repeated[1].length) + 1);
 
   bits = Math.max(1, Math.round(bits));
