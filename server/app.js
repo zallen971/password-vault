@@ -118,9 +118,15 @@ export async function createApp(options) {
   const signups = new RateLimiter({ limit: limits.signupsPerIp, windowMs: limits.signupWindowMs });
   const limiters = [loginByPair, loginByEmail, loginByIp, authRequests, signups];
 
+  // Clients (address + account) that have signed in successfully before.
+  const knownClients = new Map(); // `${ip}|${email}` -> time it stops being remembered
+  const KNOWN_CLIENT_MS = 30 * 24 * 60 * 60 * 1000;
+
   const sweeper = setInterval(() => {
     sessions.sweep();
     for (const limiter of limiters) limiter.sweep();
+    const now = Date.now();
+    for (const [client, until] of knownClients) if (until <= now) knownClients.delete(client);
   }, 60_000);
   sweeper.unref();
 
@@ -183,11 +189,18 @@ export async function createApp(options) {
    * guesses cannot slip past the limit.
    */
   async function checkCredentials(ip, email, authKey) {
+    const client = `${ip}|${email}`;
+    // The per-account limit stops guessing spread across many addresses, but
+    // on its own it would let a stranger lock the owner out by failing on
+    // purpose. So a client that has signed in to this account before answers
+    // only for its own failures, not for everyone else's.
+    const known = (knownClients.get(client) ?? 0) > Date.now();
     const guards = [
-      [loginByPair, `${ip}|${email}`],
-      [loginByEmail, email],
+      [loginByPair, client],
       [loginByIp, ip],
     ];
+    if (!known) guards.push([loginByEmail, email]);
+
     const wait = Math.max(...guards.map(([limiter, key]) => limiter.blockedFor(key)));
     if (wait) throw new HttpError(429, 'too_many_attempts', { retryAfter: wait });
     for (const [limiter, key] of guards) limiter.hit(key);
@@ -198,11 +211,12 @@ export async function createApp(options) {
       log(`[auth] failed sign-in attempt from ${ip}`);
       throw new HttpError(401, 'invalid_credentials');
     }
-    // Correct password: clear this client's strikes for the account, and take
-    // back the provisional hit from the two shared counters.
-    loginByPair.reset(guards[0][1]);
-    loginByEmail.forgive(email);
+    // Correct password: clear this client's own strikes, and take back the
+    // provisional hit from the shared counters.
+    loginByPair.reset(client);
     loginByIp.forgive(ip);
+    if (!known) loginByEmail.forgive(email);
+    knownClients.set(client, Date.now() + KNOWN_CLIENT_MS);
     return account;
   }
 

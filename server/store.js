@@ -88,9 +88,13 @@ export class Store {
     return secret;
   }
 
-  /** Number of accounts on disk, including any that could not be read. */
+  /**
+   * Number of accounts, including any on disk that could not be read and any
+   * that are being created right now (so "only the first sign-up" holds even
+   * when two arrive at once).
+   */
   get accountCount() {
-    return this.#accounts.size + this.#unreadable;
+    return this.#byEmail.size + this.#unreadable;
   }
 
   get(id) {

@@ -302,6 +302,43 @@ describe('brute-force protection', () => {
     }
   });
 
+  test('strangers failing on purpose cannot lock the owner out', async () => {
+    const server = await startServer({ trustProxy: true, limits: { loginFailuresPerEmail: 4 } });
+    try {
+      const creds = fakeCredentials('owner@example.com');
+      const from = (ip, authKey) =>
+        server.request('POST', '/api/auth/login', { body: { email: creds.email, authKey }, headers: { 'X-Forwarded-For': ip } });
+      await server.request('POST', '/api/auth/register', { body: creds, headers: { 'X-Forwarded-For': '203.0.113.9' } });
+      assert.equal((await from('203.0.113.9', creds.authKey)).status, 200, 'the owner signs in from home');
+
+      // An attacker spreads wrong guesses over many addresses until the account-wide limit trips.
+      for (let i = 0; i < 4; i += 1) assert.equal((await from(`198.51.100.${i}`, fakeCredentials().authKey)).status, 401);
+      assert.equal((await from('198.51.100.77', fakeCredentials().authKey)).status, 429, 'further guessing is blocked');
+      assert.equal((await from('198.51.100.78', creds.authKey)).status, 429, 'even with the right key from an unknown address');
+
+      // The owner, at an address that has signed in before, is unaffected...
+      assert.equal((await from('203.0.113.9', creds.authKey)).status, 200);
+      // ...but still answers for their own mistakes.
+      for (let i = 0; i < 10; i += 1) assert.equal((await from('203.0.113.9', fakeCredentials().authKey)).status, 401);
+      assert.equal((await from('203.0.113.9', creds.authKey)).status, 429);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('only one account can be created when sign-ups are limited to the first', async () => {
+    const server = await startServer();
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: 6 }, (_, i) => server.request('POST', '/api/auth/register', { body: fakeCredentials(`racer${i}@example.com`) })),
+      );
+      assert.equal(responses.filter((r) => r.status === 200).length, 1, 'exactly one of the simultaneous sign-ups succeeds');
+      assert.equal(responses.filter((r) => r.status === 403).length, 5);
+    } finally {
+      await server.close();
+    }
+  });
+
   test('successful sign-ins do not use up the allowance', async () => {
     const server = await startServer({ limits: { loginFailuresPerPair: 3, loginFailuresPerEmail: 3, loginFailuresPerIp: 3 } });
     try {
