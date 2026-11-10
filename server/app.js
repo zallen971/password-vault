@@ -136,10 +136,17 @@ export async function createApp(options) {
 
   const signupsOpen = () => (allowSignups === 'auto' ? store.accountCount === 0 : Boolean(allowSignups));
 
+  let warnedAboutProxy = false;
+
   function clientIp(req) {
+    const forwarded = req.headers['x-forwarded-for'];
     if (trustProxy) {
-      const forwarded = req.headers['x-forwarded-for'];
       if (typeof forwarded === 'string' && forwarded.trim()) return forwarded.split(',').pop().trim();
+    } else if (forwarded && !warnedAboutProxy) {
+      // Without this, every visitor appears to come from the proxy's address
+      // and they all share one set of sign-in limits.
+      warnedAboutProxy = true;
+      console.warn('[server] Requests are arriving through a proxy. Set TRUST_PROXY=true so sign-in limits apply per visitor.');
     }
     return req.socket.remoteAddress || 'unknown';
   }
