@@ -9,7 +9,7 @@ import { clearClipboardNow } from './lib/clipboard.js';
 import { closeAllDialogs } from './ui/dialog.js';
 import { closeMenus } from './ui/menu.js';
 import { clearToasts, toast } from './ui/toast.js';
-import { h } from './ui/dom.js';
+import { h, mount } from './ui/dom.js';
 import { renderAuth, renderUnsupported } from './views/auth.js';
 import { renderApp } from './views/app.js';
 
@@ -38,13 +38,18 @@ prefs.subscribe((key) => {
   if (key === 'theme') applyTheme();
 });
 
+const CONFIG_TIMEOUT_MS = 8000;
+
 async function showLocked(notice) {
+  // Show the logo while asking the server what it offers, so the screen is never blank.
+  mount(root, h('div.splash', h('img', { src: 'icons/logo.svg', alt: '', width: 56, height: 56 })));
   let config = null;
   try {
-    config = await api.config();
+    const timeout = new Promise((resolve, reject) => setTimeout(() => reject(new Error('timeout')), CONFIG_TIMEOUT_MS));
+    config = await Promise.race([api.config(), timeout]);
     serverInfo = config;
   } catch {
-    config = null;
+    config = null; // unreachable or too slow: offer to try again
   }
   if (vault.unlocked) return; // unlocked in the meantime, e.g. by a fast double submit
   renderAuth(root, { vault, config, notice, onUnlocked: showUnlocked, onRetry: () => showLocked(notice) });
@@ -105,6 +110,12 @@ setInterval(() => {
   const minutes = Number(prefs.get('autoLockMinutes'));
   if (vault.unlocked && minutes > 0 && Date.now() - lastActivity >= minutes * 60_000) vault.lock('idle');
 }, 5000);
+
+// Browsers can keep a page alive in memory after you navigate away, to make
+// the Back button instant. An unlocked vault must not linger there.
+window.addEventListener('pagehide', (event) => {
+  if (event.persisted) vault.lock('manual');
+});
 
 // ---- Background sync ----
 

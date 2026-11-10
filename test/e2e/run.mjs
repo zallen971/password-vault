@@ -529,6 +529,19 @@ async function main() {
     assert.equal(await clipboard(page), 'a-brand-new-Passw0rd!');
   });
 
+  await step('locks when the browser parks the page in its back/forward cache', async () => {
+    // Browsers keep such pages alive in memory; simulate the page being parked.
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+    await page.getByRole('heading', { name: 'Welcome back' }).waitFor();
+    assert.ok(!(await page.content()).includes('octocat'));
+    // An ordinary page unload needs no handling: memory is discarded anyway.
+    await unlock(page);
+    await page.locator('.shell').waitFor();
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })));
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('.shell').count(), 1);
+  });
+
   await step('locks every tab together and syncs changes between tabs', async () => {
     const second = await newPage(context, 'second tab');
     await second.goto(server.url);

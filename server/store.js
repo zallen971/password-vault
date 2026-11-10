@@ -19,6 +19,22 @@ export class StoreError extends Error {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+/**
+ * On Windows a rename can fail for a moment while antivirus or backup
+ * software has the destination file open, so try a few times before giving up.
+ */
+async function renameWithRetry(from, to) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await fs.rename(from, to);
+      return;
+    } catch (err) {
+      if (attempt >= 4 || !['EPERM', 'EACCES', 'EBUSY'].includes(err.code)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 40 * (attempt + 1)));
+    }
+  }
+}
+
 export class Store {
   #dir;
   #accountsDir;
@@ -208,7 +224,7 @@ export class Store {
       await handle.sync();
       await handle.close();
       handle = null;
-      await fs.rename(tmp, file);
+      await renameWithRetry(tmp, file);
     } catch (err) {
       await handle?.close().catch(() => {});
       await fs.rm(tmp, { force: true }).catch(() => {});
