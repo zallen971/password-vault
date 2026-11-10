@@ -26,6 +26,8 @@ const nextId = (prefix) => `${prefix}-${(uid += 1)}`;
 export function itemEditor({ item, isNew, vault, onDirty, onSave, onCancel, createFolder, copy }) {
   const type = TYPE_INFO[item.type];
   const dirty = () => onDirty();
+  // A folder deleted on another device may still be named by this item.
+  if (item.folderId && !vault.folder(item.folderId)) item.folderId = null;
 
   /** A plain text input bound to `target[key]`. */
   function textInput(target, key, props = {}) {

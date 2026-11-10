@@ -79,6 +79,9 @@ export function renderApp(root, { vault, serverInfo }) {
     }
   }
 
+  /** True if the item sits in a folder that still exists (one deleted on another device does not count). */
+  const isFiled = (item) => Boolean(item.folderId && vault.folder(item.folderId));
+
   function visibleItems() {
     const { filter } = state;
     const inTrash = filter.type === 'trash';
@@ -89,7 +92,7 @@ export function renderApp(root, { vault, serverInfo }) {
       if (filter.type === 'favorites' && !item.favorite) continue;
       if (filter.type === 'kind' && item.type !== filter.value) continue;
       if (filter.type === 'folder' && item.folderId !== filter.value) continue;
-      if (filter.type === 'unfiled' && item.folderId) continue;
+      if (filter.type === 'unfiled' && isFiled(item)) continue;
       if (terms.length) {
         let haystack = searchIndex.get(item);
         if (haystack === undefined) {
@@ -354,7 +357,7 @@ export function renderApp(root, { vault, serverInfo }) {
         );
       }),
       folders.length
-        ? navItem({ type: 'unfiled' }, 'inbox', 'No folder', count((item) => !item.folderId))
+        ? navItem({ type: 'unfiled' }, 'inbox', 'No folder', count((item) => !isFiled(item)))
         : h('p.nav-empty', 'Folders keep related items together.'),
       h('div.nav-heading'),
       navItem({ type: 'trash' }, 'trash', 'Trash', trashed),

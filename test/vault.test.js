@@ -272,6 +272,62 @@ describe('several devices', () => {
     assert.equal(phone.item(item.id).login.password, 'after', 'moving the item out must not roll back its password');
   });
 
+  test('devices converge after a storm of overlapping changes', async () => {
+    const tablet = device(server);
+    await tablet.unlock(EMAIL, PASSWORD);
+    const devices = [laptop, phone, tablet];
+
+    // A fixed seed keeps the storm the same on every run (STORM_SEED explores others).
+    let seed = Number(process.env.STORM_SEED) || 20240611;
+    const random = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+    const pending = [];
+    const unexpected = [];
+
+    for (let step = 0; step < 300; step += 1) {
+      const actor = devices[Math.floor(random() * devices.length)];
+      const items = actor.items;
+      const pick = () => items[Math.floor(random() * items.length)];
+      const roll = random();
+      let action;
+      const someFolder = actor.folders[Math.floor(random() * (actor.folders.length + 1))]?.id ?? null;
+      if (roll < 0.2 || items.length === 0) action = () => actor.saveItem({ ...login(`Storm ${step}`), folderId: someFolder });
+      else if (roll < 0.4) action = () => actor.saveItem({ ...pick(), notes: `edited at step ${step}` });
+      else if (roll < 0.55) action = () => actor.setFavorite(pick().id, random() < 0.5);
+      else if (roll < 0.65) action = () => actor.trashItems([pick().id]);
+      else if (roll < 0.72) action = () => actor.restoreItems([pick().id]);
+      else if (roll < 0.8) action = () => actor.deleteItems([pick().id]);
+      else if (roll < 0.86) action = () => actor.saveFolder({ name: `Folder ${step}` });
+      else if (roll < 0.9 && actor.folders.length) action = () => actor.deleteFolder(actor.folders[0].id);
+      else action = () => actor.checkForChanges();
+
+      // Conflicts are the designed outcome when two devices touch the same item; anything else is a bug.
+      const outcome = action().catch((err) => {
+        if (!(err instanceof VaultError && err.code === 'conflict')) unexpected.push(err);
+      });
+      if (random() < 0.6) await outcome;
+      else pending.push(outcome);
+    }
+    await Promise.all(pending);
+    assert.deepEqual(unexpected, []);
+
+    for (const each of devices) await each.checkForChanges();
+    const state = (each) => JSON.stringify({
+      items: [...each.items].sort((a, b) => a.id.localeCompare(b.id)),
+      folders: [...each.folders].sort((a, b) => a.id.localeCompare(b.id)),
+    });
+    assert.equal(state(phone), state(laptop));
+    assert.equal(state(tablet), state(laptop));
+    assert.ok(laptop.items.length > 10, 'the storm left a meaningful number of items');
+
+    // A device starting from scratch sees exactly the same vault.
+    const fresh = device(server);
+    await fresh.unlock(EMAIL, PASSWORD);
+    assert.equal(state(fresh), state(laptop));
+    assert.equal(fresh.unreadable, 0);
+    fresh.lock();
+    tablet.lock();
+  });
+
   test('deleting an item that changed elsewhere is refused', async () => {
     const item = await laptop.saveItem(login('Restored elsewhere'));
     await phone.checkForChanges();
