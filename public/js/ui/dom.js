@@ -128,5 +128,3 @@ export function hueFor(text) {
   for (const char of String(text)) hash = (hash * 31 + char.codePointAt(0)) >>> 0;
   return HUES[hash % HUES.length];
 }
-
-export const prefersReducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
