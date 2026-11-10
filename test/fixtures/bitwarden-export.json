@@ -1,0 +1,34 @@
+{
+  "encrypted": false,
+  "folders": [
+    { "id": "f-work", "name": "Work" },
+    { "id": "f-personal", "name": "Personal" },
+    { "id": "f-finance", "name": "Finance" },
+    { "id": "f-travel", "name": "Travel" }
+  ],
+  "items": [
+    { "type": 1, "name": "GitHub", "folderId": "f-work", "favorite": true, "notes": "Recovery codes are in the Wi-Fi & recovery note.", "login": { "username": "alex.morgan", "password": "v9#Tq2!xLp7$Wm4&Zr8K", "totp": "JBSWY3DPEHPK3PXP", "uris": [{ "uri": "https://github.com/login" }] }, "fields": [{ "name": "Plan", "value": "Team", "type": 0 }, { "name": "Recovery code", "value": "a1b2c-3d4e5", "type": 1 }, { "name": "SSO enabled", "value": "true", "type": 2 }], "passwordHistory": [{ "lastUsedDate": "2026-03-04T10:12:00.000Z", "password": "Autumn-Lantern-42" }], "creationDate": "2024-02-11T09:30:00.000Z", "revisionDate": "2026-10-28T16:45:00.000Z" },
+    { "type": 1, "name": "Google", "folderId": "f-personal", "favorite": true, "login": { "username": "alex.morgan@example.com", "password": "plaza-unbolted-crisply-moisture-refined", "uris": [{ "uri": "https://accounts.google.com" }] } },
+    { "type": 1, "name": "Amazon", "folderId": "f-personal", "login": { "username": "alex.morgan@example.com", "password": "K7!pRz3@Wq9#Lm2$Xv6T", "uris": [{ "uri": "https://www.amazon.com" }] } },
+    { "type": 1, "name": "Slack", "folderId": "f-work", "login": { "username": "alex@northwind.example", "password": "Hq4$Vn8!Zt2@Rk6#Py9L", "uris": [{ "uri": "https://northwind.slack.com" }] } },
+    { "type": 1, "name": "Figma", "folderId": "f-work", "login": { "username": "alex@northwind.example", "password": "Bx7@Lm3#Qr9!Tv5$Wz2N", "uris": [{ "uri": "https://www.figma.com/login" }] } },
+    { "type": 1, "name": "Notion", "folderId": "f-work", "login": { "username": "alex@northwind.example", "password": "Summer2024!", "uris": [{ "uri": "https://www.notion.so/login" }] } },
+    { "type": 1, "name": "Netflix", "folderId": "f-personal", "login": { "username": "alex.morgan@example.com", "password": "movienight1", "uris": [{ "uri": "https://www.netflix.com" }] } },
+    { "type": 1, "name": "Spotify", "folderId": "f-personal", "login": { "username": "alexm", "password": "movienight1", "uris": [{ "uri": "https://accounts.spotify.com" }] } },
+    { "type": 1, "name": "Dropbox", "folderId": "f-personal", "login": { "username": "alex.morgan@example.com", "password": "Zc5!Nw8@Jd3#Fh7$Gs1Q", "uris": [{ "uri": "https://www.dropbox.com/login" }] } },
+    { "type": 1, "name": "First National Bank", "folderId": "f-finance", "favorite": true, "login": { "username": "amorgan84", "password": "Tm6#Yb2!Ck9@Dq4$Ru7S", "totp": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", "uris": [{ "uri": "https://online.firstnational.example" }] } },
+    { "type": 1, "name": "PayPal", "folderId": "f-finance", "login": { "username": "alex.morgan@example.com", "password": "Wn3@Ks7#Hv1!Bp5$Lt9M", "uris": [{ "uri": "https://www.paypal.com/signin" }] } },
+    { "type": 1, "name": "Airline Rewards", "folderId": "f-travel", "login": { "username": "AM4471902", "password": "Jf8!Rd2@Xc6#Vb4$Nm1P", "uris": [{ "uri": "https://www.skyways.example/login" }] } },
+    { "type": 1, "name": "Hotel Loyalty", "folderId": "f-travel", "login": { "username": "alex.morgan@example.com", "password": "Qv2#Zm9!Tr5@Wk3$Hs8D", "uris": [{ "uri": "https://www.staywell.example" }] } },
+    { "type": 1, "name": "Home Router", "folderId": null, "login": { "username": "admin", "password": "admin123", "uris": [{ "uri": "http://192.168.1.1" }] } },
+    { "type": 1, "name": "LinkedIn", "folderId": "f-work", "login": { "username": "alex.morgan@example.com", "password": "Gd4$Lp7!Sn2@Xr9#Fw6B", "uris": [{ "uri": "https://www.linkedin.com/login" }] } },
+    { "type": 1, "name": "Microsoft 365", "folderId": "f-work", "login": { "username": "alex@northwind.example", "password": "Rb9!Ht3@Mv7#Cz1$Kq5J", "uris": [{ "uri": "https://login.microsoftonline.com" }] } },
+    { "type": 1, "name": "Zoom", "folderId": "f-work", "login": { "username": "alex@northwind.example", "password": "Yp6@Dw2#Nk8!Sx4$Lb3G", "uris": [{ "uri": "https://zoom.us/signin" }] } },
+    { "type": 1, "name": "Electric Company", "folderId": "f-finance", "login": { "username": "alex.morgan@example.com", "password": "Vk1#Bn5!Qz9@Tc3$Mh7W", "uris": [{ "uri": "https://my.brightgrid.example" }] } },
+    { "type": 2, "name": "Wi-Fi & recovery", "folderId": "f-personal", "notes": "Home Wi-Fi\nNetwork: Morgan-5G\nPassword: maple-copper-harbor-19\n\nGitHub recovery codes\n4f9a2-1c7de\n8b3e6-5a0f1\nc2d48-97be3", "secureNote": { "type": 0 } },
+    { "type": 2, "name": "Car insurance policy", "folderId": "f-finance", "notes": "Policy number: PA-2291-448-07\nRenewal: 14 March\nClaims line: 0800 555 0199", "secureNote": { "type": 0 } },
+    { "type": 3, "name": "Everyday Visa", "folderId": "f-finance", "favorite": false, "card": { "cardholderName": "Alex Morgan", "brand": "Visa", "number": "4242424242424242", "expMonth": "8", "expYear": "2029", "code": "123" } },
+    { "type": 3, "name": "Travel Mastercard", "folderId": "f-travel", "card": { "cardholderName": "Alex Morgan", "brand": "Mastercard", "number": "5555555555554444", "expMonth": "11", "expYear": "2028", "code": "456" } },
+    { "type": 4, "name": "Alex Morgan", "folderId": "f-personal", "identity": { "title": "", "firstName": "Alex", "middleName": "", "lastName": "Morgan", "username": "alexm", "company": "Northwind Traders", "email": "alex.morgan@example.com", "phone": "+1 555 010 4477", "ssn": "000-12-3456", "passportNumber": "X1234567", "licenseNumber": "D123-4567-8901", "address1": "221 Maple Street", "address2": "Apt 4B", "city": "Springfield", "state": "IL", "postalCode": "62704", "country": "United States" } }
+  ]
+}

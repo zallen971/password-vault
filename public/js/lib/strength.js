@@ -30,7 +30,8 @@ const COMMON = new Set(
   qazwsxedc azerty zxcvb poiuyt mnbvcxz abcd abcdef abcdefg abcdefgh abcd1234 aa123456 pass123 pass1234
   passw admin123 root123 test123 welcome1 welcome123 hello123 love123 master123 jesus christ heaven blessed
   faith grace hope peace happy smile dream magic secret1 mypassword mypass newpassword newpass oldpassword
-  1qaz2wsx3edc 1qazxsw2 zaq1xsw2 qweasdzxc 1q2w3e4r5t q1w2e3r4t5 asdfzxcv poiuytrewq a1b2c3d4 a1b2c3 1a2b3c4d`
+  1qaz2wsx3edc 1qazxsw2 zaq1xsw2 qweasdzxc 1q2w3e4r5t q1w2e3r4t5 asdfzxcv poiuytrewq a1b2c3d4 a1b2c3 1a2b3c4d
+  birthday sydney tokyo london paris`
     .split(/\s+/)
     .filter(Boolean),
 );
@@ -41,7 +42,8 @@ const SHORT_WORDS = `the and for you not are but all can her was one our out day
   fun win joy sky sea ice war law art age air arm bed box bus cup cut eye far fat fly gun hat key kid lab leg lip
   low map mix net oil pay pen pet pie pig pin pop ran rat raw run sad sit six ten tie toy van wet yes yet zoo
   love baby blue cool fire girl game home king life lion live mine moon nice open pink play rock rose star time
-  wolf word work year your john mike dave anna emma jack luke mary paul adam alex ryan sara kate`.split(/\s+/);
+  wolf word work year your john mike dave anna emma jack luke mary paul adam alex ryan sara kate
+  my is it to in on of at be we he me no so up do go if or as an by us am oh ok hi`.split(/\s+/);
 
 let dictionary = null;
 let letterPairs = null;
@@ -83,7 +85,7 @@ const LETTER_BITS = Math.log2(26);
 const DIGIT_BITS = Math.log2(10);
 const SYMBOL_BITS = Math.log2(33);
 const RUNS = /\p{Lu}?\p{Ll}+|\p{Lu}+|\p{L}+|\p{Nd}+|[^\p{L}\p{Nd}]+/gu;
-const WORD_MIN = 3; // shortest letter run treated as a possible word
+const WORD_MIN = 3; // shortest letter run judged by how word-like it sounds
 const LEET_WORD_MIN = 6; // de-l33ted words must be longer to count, to avoid false alarms
 
 const distinct = (text) => new Set(text).size;
@@ -124,27 +126,60 @@ function looksLikeWords(lower) {
 }
 
 const DICTIONARY_BITS = Math.log2(WORDS.length);
+const COMMON_BITS = 4;
 const wordBits = (length) => Math.min(length * LETTER_BITS, 1.5 * length + 5);
+const knownWordBits = (word) => (COMMON.has(word) ? COMMON_BITS : Math.min(wordBits(word.length), DICTIONARY_BITS));
 
-function letterRunBits(run, randomBits) {
+/**
+ * If a run of letters is entirely made of known words stuck together
+ * ("passwordpassword", "correcthorsebatterystaple"), returns the cheapest way
+ * to spell it in bits; otherwise null.
+ */
+function wordChainBits(lower) {
+  const n = lower.length;
+  if (n < 4 || n > 64) return null;
+  const best = new Array(n + 1).fill(Infinity);
+  const words = new Array(n + 1).fill(0);
+  best[0] = 0;
+  for (let end = 2; end <= n; end += 1) {
+    for (let start = Math.max(0, end - 12); start <= end - 2; start += 1) {
+      if (best[start] === Infinity) continue;
+      const word = lower.slice(start, end);
+      if (!COMMON.has(word) && !isDictionaryWord(word)) continue;
+      const bits = best[start] + knownWordBits(word);
+      if (bits < best[end]) {
+        best[end] = bits;
+        words[end] = words[start] + 1;
+      }
+    }
+  }
+  return best[n] !== Infinity && words[n] >= 2 ? best[n] : null;
+}
+
+/** @returns {{bits: number, word: boolean}} cost of a letter run, and whether it reads as words */
+function letterRun(run, randomBits) {
   const lower = run.toLowerCase();
   const n = [...lower].length;
   const caseBit = run !== lower ? 1 : 0;
-  if (COMMON.has(lower)) return 4 + caseBit;
-  if (n >= 3 && distinct(lower) === 1) return LETTER_BITS + Math.log2(n) + caseBit; // "aaaa"
-  if (n >= 6 && distinct(lower) === 2) return 2 * LETTER_BITS + Math.log2(n) + caseBit; // "ababab"
-  if (n >= 4 && isSequence(lower)) return LETTER_BITS + Math.log2(n) + 1 + caseBit; // "abcd", "qwer"
-  if (isDictionaryWord(lower)) return Math.min(wordBits(n), DICTIONARY_BITS) + caseBit;
-  if (n >= WORD_MIN && looksLikeWords(lower)) return wordBits(n) + caseBit;
-  return n * randomBits;
+  const word = (bits) => ({ bits: bits + caseBit, word: true });
+  if (COMMON.has(lower)) return word(COMMON_BITS);
+  if (n >= 3 && distinct(lower) === 1) return word(LETTER_BITS + Math.log2(n)); // "aaaa"
+  if (n >= 6 && distinct(lower) === 2) return word(2 * LETTER_BITS + Math.log2(n)); // "ababab"
+  if (n >= 4 && isSequence(lower)) return word(LETTER_BITS + Math.log2(n) + 1); // "abcd", "qwer"
+  if (isDictionaryWord(lower)) return word(knownWordBits(lower));
+  const chain = /[^a-z]/.test(lower) ? null : wordChainBits(lower);
+  const wordy = n >= WORD_MIN && looksLikeWords(lower) ? wordBits(n) : Infinity;
+  if (chain !== null || wordy !== Infinity) return word(Math.min(chain ?? Infinity, wordy));
+  return { bits: n * randomBits, word: false };
 }
 
-function digitRunBits(run, randomBits) {
+function digitRunBits(run, randomBits, besideWord) {
   const n = run.length;
-  if (n >= 3 && distinct(run) === 1) return DIGIT_BITS + Math.log2(n); // "0000"
+  if (n >= 2 && distinct(run) === 1) return DIGIT_BITS + Math.log2(n); // "00", "7777"
   if (n >= 3 && isSequence(run)) return DIGIT_BITS + Math.log2(n) + 1; // "1234"
   if (/^(19|20)\d\d$/.test(run)) return 6.6; // a year
-  if (n >= 3) return n * DIGIT_BITS; // clearly "a number"
+  // Three or more digits, or any digits tacked onto a word, are "a number".
+  if (n >= 3 || besideWord) return n * DIGIT_BITS;
   return n * randomBits;
 }
 
@@ -160,18 +195,31 @@ function poolSize(text) {
 function entropyOf(text) {
   const runs = text.match(RUNS) ?? [];
   const randomBits = Math.log2(poolSize(text));
-  const wordy = (run) => run !== undefined && isLetters(run) && [...run].length >= WORD_MIN;
+  const parts = runs.map((run) => {
+    if (isLetters(run)) return { run, kind: 'letters', ...letterRun(run, randomBits) };
+    return { run, kind: isDigits(run) ? 'digits' : 'symbols', word: false };
+  });
+  const isWord = (part) => Boolean(part?.word);
+  const isAlnum = (part) => part !== undefined && part.kind !== 'symbols';
+  const isJoiner = (part) => part?.kind === 'symbols' && [...part.run].length === 1;
+
   const separators = new Set();
   let bits = 0;
-  runs.forEach((run, index) => {
-    if (isLetters(run)) bits += letterRunBits(run, randomBits);
-    else if (isDigits(run)) bits += digitRunBits(run, randomBits);
-    else if ([...run].length === 1 && wordy(runs[index - 1]) && wordy(runs[index + 1])) {
+  parts.forEach((part, index) => {
+    const before = parts[index - 1];
+    const after = parts[index + 1];
+    if (part.kind === 'letters') {
+      bits += part.bits;
+    } else if (part.kind === 'digits') {
+      // "word99" and "word 99": the number belongs to the neighbouring word.
+      const besideWord = isWord(before) || isWord(after) || (isJoiner(before) && isWord(parts[index - 2])) || (isJoiner(after) && isWord(parts[index + 2]));
+      bits += digitRunBits(part.run, randomBits, besideWord);
+    } else if (isJoiner(part) && isAlnum(before) && isAlnum(after) && (isWord(before) || isWord(after))) {
       // A separator between words: choosing it costs something once, repeating it almost nothing.
-      bits += separators.has(run) ? 1 : SYMBOL_BITS;
-      separators.add(run);
+      bits += separators.has(part.run) ? 1 : SYMBOL_BITS;
+      separators.add(part.run);
     } else {
-      bits += [...run].length * randomBits;
+      bits += [...part.run].length * randomBits;
     }
   });
   return bits;
@@ -241,6 +289,10 @@ export function estimateStrength(password) {
 
   const decoration = commonDecoration(text);
   if (decoration !== null) bits = Math.min(bits, 6 + 2.5 * decoration);
+
+  // The same thing typed several times over: "abc123abc123".
+  const repeated = /^(.+?)\1+$/su.exec(text);
+  if (repeated) bits = Math.min(bits, estimateStrength(repeated[1]).bits + Math.log2(text.length / repeated[1].length) + 1);
 
   bits = Math.max(1, Math.round(bits));
   const score = scoreOf(bits);

@@ -218,7 +218,7 @@ export async function createApp(options) {
   // ---- Route handlers. Each returns the JSON body, or undefined for 204. ----
 
   function getConfig() {
-    return { name: 'password-vault', version: VERSION, signupsOpen: signupsOpen() };
+    return { name: 'password-vault', version: VERSION, signupsOpen: signupsOpen(), firstRun: store.accountCount === 0 };
   }
 
   async function prelogin({ ip, body }) {

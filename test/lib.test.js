@@ -295,7 +295,8 @@ describe('strength', () => {
     for (const password of [
       '', 'password', 'Password1', 'Password123!', 'P@ssw0rd!', 'qwerty', 'qwertyuiop', '123456', '12345678', 'letmein',
       'iloveyou', 'abc123', 'aaaaaaaaaaaa', 'abcdefgh', '11111111', 'Summer2024!', 'hunter2', 'admin123', 'welcome1',
-      'MyP@ssw0rd2024!', '493817', 'Zx9!',
+      'MyP@ssw0rd2024!', '493817', 'Zx9!', 'passwordpassword', 'adminadminadmin', 'abc123abc123', 'iloveyoupassword',
+      'qwertyqwerty', 'hellohello12', '1qaz2wsx3edc', 'a1b2c3d4',
     ]) {
       assert.equal(score(password), 0, JSON.stringify(password));
     }
@@ -304,7 +305,8 @@ describe('strength', () => {
   test('rates human-style passwords as weak or fair, never strong', () => {
     for (const password of [
       'Tr0ub4dor&3', 'iloveyouverymuch', 'MyDogIsCute', 'Fluffy-the-cat', 'Liverpool1892FC', 'correcthorsebatterystaple',
-      'M0nk3yBus1ness', 'dr4g0nSl4yer99', 'John1985', '1qaz2wsx3edc', 'a1b2c3d4',
+      'M0nk3yBus1ness', 'dr4g0nSl4yer99', 'John1985', 'Tr0ub4dor&3Tr0ub4dor&3', 'my dog is cute 99', 'happy birthday 2020',
+      'winter is coming 99', 'purple monkey dishwasher', 'i love my dog rex',
     ]) {
       assert.ok(score(password) <= 2, `${password} scored ${score(password)}`);
     }
@@ -331,7 +333,7 @@ describe('strength', () => {
     assert.ok(rate(() => generatePassphrase({ words: 6 }), 4) >= 0.95, 'six words (77 bits) are strong');
     assert.ok(rate(() => generatePassphrase({ words: 5 }), 3) >= 0.98, 'five words (65 bits) are good');
     assert.ok(rate(() => generatePassphrase({ words: 3 }), 3) <= 0.05, 'three words (39 bits) are not');
-    assert.equal(score('correct horse battery staple'), 3);
+    assert.ok([2, 3].includes(score('correct horse battery staple')), 'four common words are fair to good');
   });
 
   test('short random passwords are not over-rated', () => {
