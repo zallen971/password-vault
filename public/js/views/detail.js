@@ -295,7 +295,7 @@ export function itemView({ item, folderName, animate, actions }) {
       itemAvatar(item, { large: true }),
       h(
         'div.detail-heading',
-        h('h2.detail-title', displayName(item)),
+        h('h2.detail-title', { tabIndex: -1 }, displayName(item)),
         h(
           'div.detail-meta',
           h('span', icon(TYPE_INFO[item.type].icon, 13), TYPE_INFO[item.type].label),

@@ -222,6 +222,7 @@ export function renderApp(root, { vault, serverInfo }) {
       toast(isNew ? 'Item added' : 'Changes saved');
       renderDetail(false);
       markSelection(true);
+      focusDetail();
     } catch (error) {
       const conflict = error instanceof VaultError && error.code === 'conflict';
       if (conflict) session.base = vault.item(draft.id);
@@ -234,6 +235,12 @@ export function renderApp(root, { vault, serverInfo }) {
     if (!state.editor || !(await leaveEditor())) return;
     state.editor = null;
     renderDetail(true); // falls back to the list when there is nothing to show
+    focusDetail();
+  }
+
+  /** After the editor closes, keyboard focus goes to the item's heading instead of being lost. */
+  function focusDetail() {
+    detailPane.querySelector('.detail-title')?.focus({ preventScroll: true });
   }
 
   async function trashItem(item) {
@@ -648,6 +655,7 @@ export function renderApp(root, { vault, serverInfo }) {
         createFolder,
         copy,
       });
+      disposeDetail = editor.dispose;
       mount(detailPane, editor.el);
       detailPane.scrollTop = 0;
       editor.focus();

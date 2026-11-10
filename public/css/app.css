@@ -2663,6 +2663,13 @@ dialog.dialog::backdrop {
 
 /* ---------- Late additions ---------- */
 
+/* Headings that receive focus from scripts (for keyboard and screen-reader
+   users) should not draw a focus ring. */
+.detail-title:focus,
+.editor-head h2:focus {
+  outline: none;
+}
+
 .stack:empty {
   display: none;
 }

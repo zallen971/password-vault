@@ -477,6 +477,25 @@ async function main() {
     await row(page, 'example.org').waitFor();
   });
 
+  await step('saves with Ctrl+S and cancels with Escape', async () => {
+    await row(page, 'Door code').click();
+    await page.getByRole('button', { name: 'Edit' }).click();
+    await page.getByLabel('Name', { exact: true }).fill('Front door code');
+    await page.keyboard.press('Control+s');
+    await sawToast(page, 'Changes saved');
+    await page.locator('.detail-title', { hasText: 'Front door code' }).waitFor();
+
+    await page.getByRole('button', { name: 'Edit' }).click();
+    await page.getByLabel('Name', { exact: true }).fill('Door code');
+    await page.keyboard.press('Control+s');
+    await sawToast(page, 'Changes saved');
+
+    await page.getByRole('button', { name: 'Edit' }).click();
+    await page.keyboard.press('Escape'); // nothing changed, so no confirmation is needed
+    await page.locator('.detail-title', { hasText: 'Door code' }).waitFor();
+    assert.equal(await page.locator('.editor-head').count(), 0);
+  });
+
   await step('duplicates an item', async () => {
     await row(page, 'GitHub').click();
     await page.getByRole('button', { name: 'More actions' }).click();

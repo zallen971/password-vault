@@ -362,6 +362,7 @@ export function itemEditor({ item, isNew, vault, onDirty, onSave, onCancel, crea
   // ---- Form ----
 
   const saveButton = h('button.btn.btn-primary.btn-sm', { type: 'submit' }, 'Save');
+  const heading = h('h2.truncate', { tabIndex: -1 }, isNew ? `New ${type.label.toLowerCase()}` : `Edit ${type.label.toLowerCase()}`);
 
   async function onSubmit(event) {
     event.preventDefault();
@@ -396,28 +397,32 @@ export function itemEditor({ item, isNew, vault, onDirty, onSave, onCancel, crea
   const el = h(
     'form.detail',
     { onsubmit: onSubmit, novalidate: true, autocomplete: 'off' },
-    h(
-      'header.editor-head',
-      h('h2.truncate', isNew ? `New ${type.label.toLowerCase()}` : `Edit ${type.label.toLowerCase()}`),
-      h('button.btn.btn-ghost.btn-sm', { type: 'button', onclick: onCancel }, 'Cancel'),
-      saveButton,
-    ),
+    h('header.editor-head', heading, h('button.btn.btn-ghost.btn-sm', { type: 'button', onclick: onCancel }, 'Cancel'), saveButton),
     general,
     sections,
   );
 
-  // Escape cancels, as long as it was not meant for a field or menu.
-  el.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !event.defaultPrevented && !document.querySelector('.menu:popover-open')) {
+  // Escape cancels and Ctrl/Cmd+S saves, wherever the focus happens to be,
+  // unless a dialog or menu is open on top of the editor.
+  function onKeydown(event) {
+    if (event.defaultPrevented || event.isComposing || document.querySelector('dialog[open], .menu:popover-open')) return;
+    if (event.key === 'Escape') {
       event.preventDefault();
       onCancel();
+    } else if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      el.requestSubmit();
     }
-  });
+  }
+  document.addEventListener('keydown', onKeydown);
 
   return {
     el,
+    /** Moves focus into the form: to the name on desktop, to the heading on touch screens (no keyboard pop-up). */
     focus: () => {
-      if (isNew && matchMedia('(pointer: fine)').matches) nameInput.focus({ preventScroll: true });
+      const target = matchMedia('(pointer: fine)').matches ? nameInput : heading;
+      target.focus({ preventScroll: true });
     },
+    dispose: () => document.removeEventListener('keydown', onKeydown),
   };
 }
