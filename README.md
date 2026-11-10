@@ -107,6 +107,7 @@ Vault is configured with environment variables. The defaults suit running it on 
 | `ALLOW_SIGNUPS` | *(unset)* | Unset: new accounts can be created only until the first one exists. `true`: anyone who can reach the server can create an account. `false`: nobody can. |
 | `TRUST_PROXY` | `false` | Set to `true` when Vault runs behind a reverse proxy, so it reads the visitor's address and HTTPS status from the proxy. Leave it off otherwise. |
 | `TLS_CERT`, `TLS_KEY` | *(unset)* | Paths to a certificate and private key, to serve HTTPS directly. |
+| `ALLOWED_HOSTS` | *(see right)* | Comma-separated host names Vault answers to, for example `vault.example.com`. With the default `HOST` it answers only to `localhost` and `127.0.0.1`; on the network it answers to any name unless you set this. |
 | `BACKUP_DAYS` | `14` | How many daily snapshots of each vault to keep. `0` turns snapshots off. |
 
 On Windows, set a variable before starting with `set NAME=value` (Command Prompt) or `$env:NAME="value"` (PowerShell), then run `npm start`.
@@ -124,14 +125,15 @@ Losing the `data` folder means losing your vault, so back it up. Three layers ar
 ## How your data is protected
 
 - **Your master password never leaves your device.** It is stretched with PBKDF2-SHA256 (600,000 rounds) into a master key. From that, two separate keys are derived: one that proves who you are to the server, and one that never leaves the browser.
-- **Every item is encrypted with AES-256-GCM** under a random 256-bit vault key, which is itself encrypted with the key that never leaves your browser. Names, usernames, websites, notes, folders, even which type each item is: all of it is inside the encrypted data.
-- **The server stores only** your email address, the encrypted records, and a salted hash of the sign-in key. Someone who copies the `data` folder gets nothing they can read without your master password, and nothing they can use to sign in.
+- **Every item is encrypted with AES-256-GCM** under a random 256-bit vault key, which is itself encrypted with the key that never leaves your browser. Names, usernames, websites, notes, folders and the type of each item are all inside the encrypted data.
+- **The server stores only** your email address, the encrypted records, and a salted hash of the sign-in key. Someone who copies the `data` folder gets nothing they can read without your master password, and nothing they can use to sign in. They can see how many records there are and roughly how large each is; records are padded to 512-byte blocks so that sizes give little away.
 - **Each encrypted record is bound to its own identity**, so a tampered server cannot quietly swap one item's contents for another's.
-- **Sign-in attempts are rate limited** per account and per address, and signing in does not reveal whether an email address has an account.
+- **Sign-in attempts are rate limited** per account and per address, and signing in does not reveal whether an email address has an account. Changing your master password signs out every other device.
+- **Other websites cannot drive the server.** Requests sent by any page other than Vault itself are refused, and when Vault runs only on your own computer it answers only to `localhost`.
 - **The page is locked down** with a strict Content Security Policy: no inline scripts, no third-party code, no frames. Vault contents are only ever inserted into the page as text, never as markup.
 - **Keys and decrypted items live in memory only**, and are discarded when the vault locks or the tab closes. The browser remembers nothing but your display preferences and, if you allow it, your email address.
 
-Copied passwords are wiped from the clipboard after 30 seconds (you can change this). Browsers limit what a web page may do to the clipboard: Chrome and Edge allow the wipe while Vault is the active window, and otherwise it happens as soon as you return to Vault; Safari and Firefox only allow it when you next click or type in Vault.
+Copied passwords are wiped from the clipboard after 30 seconds (you can change this). Browsers limit what a web page may do to the clipboard: Chrome and Edge allow the wipe while Vault is the active window; Safari and Firefox only when you click or type in Vault. If the wipe is refused, Vault tries again when you come back to it within five minutes. After that it leaves the clipboard alone, because by then it has probably been used for something else. A web page also cannot check what is on the clipboard, so the wipe clears whatever is there.
 
 The breached-password check is optional and only runs when you ask for it. It uses the [Have I Been Pwned](https://haveibeenpwned.com/Passwords) range service: each password is hashed on your device and only the first 5 characters of the hash are sent, never a password.
 

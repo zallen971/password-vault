@@ -71,6 +71,7 @@ describe('accounts and sessions', () => {
         'no email': { ...good, email: '' },
         'bad email': { ...good, email: 'not-an-email' },
         'weak kdf': { ...good, kdf: { ...good.kdf, iterations: 1000 } },
+        'kdf below the default': { ...good, kdf: { ...good.kdf, iterations: 599_999 } },
         'unknown kdf': { ...good, kdf: { name: 'MD5', hash: 'SHA-256', iterations: 600000 } },
         'short salt': { ...good, salt: 'AAAA' },
         'short auth key': { ...good, authKey: 'AAAA' },

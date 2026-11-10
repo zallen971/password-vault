@@ -16,8 +16,9 @@ export const DEFAULT_KDF = Object.freeze({ name: 'PBKDF2', hash: 'SHA-256', iter
 
 // Settings outside this range are refused. The floor matters: it stops a
 // tampered server (or backup file) from talking this device into deriving
-// keys so cheaply that the password could be brute-forced.
-export const MIN_KDF_ITERATIONS = 100_000;
+// keys more cheaply than this app ever would, which would make the password
+// easier to brute-force.
+export const MIN_KDF_ITERATIONS = DEFAULT_KDF.iterations;
 export const MAX_KDF_ITERATIONS = 10_000_000;
 
 const HKDF_SALT = encoder.encode('password-vault/v1');
@@ -169,8 +170,19 @@ export async function decryptBytes(key, blobBase64, context) {
   return new Uint8Array(plaintext);
 }
 
+const PAD_BLOCK = 512;
+
+/**
+ * Encrypts a JSON value. The text is padded with spaces to a whole number of
+ * 512-byte blocks first, so the size of the ciphertext says little about what
+ * is inside: a folder looks like a short note, and changing a password by a
+ * few characters does not change the size at all.
+ */
 export async function encryptJson(key, value, context) {
-  return encryptBytes(key, encoder.encode(JSON.stringify(value)), context);
+  const json = encoder.encode(JSON.stringify(value));
+  const padded = new Uint8Array(Math.ceil(json.length / PAD_BLOCK) * PAD_BLOCK).fill(0x20);
+  padded.set(json);
+  return encryptBytes(key, padded, context);
 }
 
 export async function decryptJson(key, blobBase64, context) {

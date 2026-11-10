@@ -12,11 +12,29 @@ export class ImportError extends Error {}
 
 const text = (value) => (typeof value === 'string' ? value : value == null ? '' : String(value));
 const truthy = (value) => /^(1|true|yes|y|on)$/i.test(text(value).trim());
+const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * Turns a file's bytes into text. Exports are normally UTF-8, but a CSV that
+ * has been through a spreadsheet often is not; decoding that as UTF-8 would
+ * silently turn every accented character (in a password, say) into "\uFFFD".
+ * @returns {{text: string, encoding: 'UTF-8'|'UTF-16'|'Windows-1252'}}
+ */
+export function decodeFileBytes(bytes) {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return { text: new TextDecoder('utf-16le').decode(bytes), encoding: 'UTF-16' };
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return { text: new TextDecoder('utf-16be').decode(bytes), encoding: 'UTF-16' };
+  try {
+    return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), encoding: 'UTF-8' };
+  } catch {
+    return { text: new TextDecoder('windows-1252').decode(bytes), encoding: 'Windows-1252' };
+  }
+}
 
 /**
  * @param {string} content  the file's text
  * @returns {{format: string, label: string, encrypted?: true, envelope?: object,
- *            items: object[], warnings: string[]}}
+ *            items: object[], folders: string[], warnings: string[]}}
+ *   `folders` names every folder in the file, including empty ones.
  */
 export function parseImport(content) {
   const source = text(content).replace(/^﻿/, '').trim();
@@ -31,7 +49,7 @@ export function parseImport(content) {
     }
     if (data?.format === BACKUP_FORMAT) {
       if (!data.kdf || !data.salt || !data.data) throw new ImportError('That backup file is incomplete.');
-      return { format: 'backup', label: 'Encrypted Vault backup', encrypted: true, envelope: data, items: [], warnings: [] };
+      return { format: 'backup', label: 'Encrypted Vault backup', encrypted: true, envelope: data, items: [], folders: [], warnings: [] };
     }
     if (data?.encrypted === true) {
       throw new ImportError(
@@ -59,12 +77,16 @@ function fromBitwardenJson(data) {
   const items = [];
   let unsupported = 0;
   let passkeys = 0;
+  let linkedFields = 0;
+  let reprompts = 0;
 
   for (const raw of data.items) {
     if (!raw || typeof raw !== 'object') {
       unsupported += 1;
       continue;
     }
+    linkedFields += (Array.isArray(raw.fields) ? raw.fields : []).filter((field) => field?.type === 3).length;
+    if (raw.reprompt) reprompts += 1;
     const base = {
       name: text(raw.name),
       notes: text(raw.notes),
@@ -134,13 +156,16 @@ function fromBitwardenJson(data) {
   }
 
   const warnings = [];
-  if (passkeys) {
-    warnings.push(
-      `${passkeys} passkey${passkeys === 1 ? '' : 's'} cannot be moved between password managers and will be left behind.`,
-    );
+  if (passkeys) warnings.push(`${count(passkeys, 'passkey')} cannot be moved between password managers and will be left behind.`);
+  if (linkedFields) {
+    warnings.push(`${count(linkedFields, 'linked custom field')} will be left out. They only point at a login's username or password, which are imported.`);
   }
-  if (unsupported) warnings.push(`${unsupported} item${unsupported === 1 ? ' is' : 's are'} of a type that is not supported and will be skipped.`);
-  return { format: 'bitwarden-json', label: 'Bitwarden (JSON)', items, warnings };
+  if (reprompts) {
+    warnings.push(`${count(reprompts, 'item asks', 'items ask')} for the master password again before showing details. Vault has no such setting, so they will open like any other item.`);
+  }
+  if (unsupported) warnings.push(`${count(unsupported, 'item is', 'items are')} of a type that is not supported and will be skipped.`);
+  const folders = [...new Set([...names.values()].filter(Boolean))];
+  return { format: 'bitwarden-json', label: 'Bitwarden (JSON)', items, folders, warnings };
 }
 
 // ---- CSV ----
@@ -225,7 +250,8 @@ function fromCsv(source) {
   }
 
   if (!items.length) throw new ImportError('That file does not contain any items.');
-  return { format: isBitwarden ? 'bitwarden-csv' : 'csv', label: isBitwarden ? 'Bitwarden (CSV)' : 'CSV', items, warnings: [] };
+  const folders = [...new Set(items.map((item) => item.folderName).filter(Boolean))];
+  return { format: isBitwarden ? 'bitwarden-csv' : 'csv', label: isBitwarden ? 'Bitwarden (CSV)' : 'CSV', items, folders, warnings: [] };
 }
 
 /** Bitwarden's CSV packs custom fields into one cell as "name: value" lines. */

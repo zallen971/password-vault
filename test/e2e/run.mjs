@@ -653,6 +653,55 @@ async function main() {
     await timedContext.close();
   });
 
+  await step('gives up on a refused clipboard wipe rather than erasing something unrelated later', async () => {
+    const timedContext = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+    await timedContext.clock.install();
+    const tab = await newPage(timedContext, 'clipboard tab');
+    await tab.goto(server.url);
+    await unlock(tab);
+    await tab.locator('.shell').waitFor();
+    // Never lock during this test; only the clipboard timing matters here.
+    await tab.evaluate(() => localStorage.setItem('vault.prefs.v1', JSON.stringify({ ...JSON.parse(localStorage.getItem('vault.prefs.v1') || '{}'), autoLockMinutes: 0 })));
+    await tab.reload();
+    await unlock(tab);
+    await tab.locator('.shell').waitFor();
+
+    // Make the browser refuse to empty the clipboard, as it does when the
+    // page is in the background (Chrome) or there is no click (Safari, Firefox).
+    const refuseWipes = (refuse) =>
+      tab.evaluate((on) => {
+        window.__realWrite ??= navigator.clipboard.writeText.bind(navigator.clipboard);
+        navigator.clipboard.writeText = (text) => (on && text === '' ? Promise.reject(new Error('refused')) : window.__realWrite(text));
+      }, refuse);
+    const copyNote = async () => {
+      await row(tab, 'Door code').click();
+      await tab.locator('.detail .field', { hasText: '4321' }).getByRole('button', { name: 'Copy note' }).click();
+      assert.equal(await clipboard(tab), '4321 then #');
+    };
+
+    // Refused, but the person is back within a couple of minutes: the wipe goes through on their next click.
+    await copyNote();
+    await refuseWipes(true);
+    await timedContext.clock.fastForward(31_000);
+    assert.equal(await clipboard(tab), '4321 then #', 'the refused wipe leaves the clipboard as it was');
+    await refuseWipes(false);
+    await timedContext.clock.fastForward(60_000);
+    await tab.locator('.list-title').click();
+    await assert.doesNotReject(tab.waitForFunction(() => navigator.clipboard.readText().then((text) => text === '')));
+
+    // Refused, and the person only comes back much later, having copied something else meanwhile.
+    await copyNote();
+    await refuseWipes(true);
+    await timedContext.clock.fastForward(31_000);
+    await refuseWipes(false);
+    await tab.evaluate(() => window.__realWrite('something copied in another app'));
+    await timedContext.clock.fastForward('03:00:00');
+    await tab.locator('.list-title').click();
+    await tab.waitForTimeout(300);
+    assert.equal(await clipboard(tab), 'something copied in another app', 'an old pending wipe must not erase unrelated content');
+    await timedContext.close();
+  });
+
   await step('locks on the first click after the computer wakes from sleep', async () => {
     const timedContext = await browser.newContext();
     await timedContext.clock.install();
@@ -877,6 +926,35 @@ async function main() {
     await page.unroute(endpoint);
   });
 
+  await step('keeps a setting changed in one tab when another tab saves a different one', async () => {
+    const other = await newPage(context, 'settings tab');
+    await other.goto(server.url);
+    await unlock(other);
+    await other.locator('.shell').waitFor();
+
+    // Tighten security in the first tab...
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const settings = page.getByRole('dialog', { name: 'Settings' });
+    await settings.getByLabel('Clear clipboard').selectOption({ label: 'After 10 seconds' });
+    await page.keyboard.press('Escape');
+
+    // ...then do something in the other tab that saves an unrelated preference.
+    await other.getByRole('button', { name: 'Generator' }).click();
+    await other.getByRole('dialog', { name: 'Generator' }).getByRole('button', { name: 'Generate another' }).click();
+    await other.keyboard.press('Escape');
+
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('vault.prefs.v1')));
+    assert.equal(stored.clipboardClearSeconds, 10, 'the other tab must not write its stale copy back');
+    assert.ok(stored.generator, 'and its own change is saved too');
+    await other.getByRole('button', { name: 'Settings' }).click();
+    assert.equal(await other.getByLabel('Clear clipboard').inputValue(), '10', 'the other tab sees the new value');
+    await other.close();
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await settings.getByLabel('Clear clipboard').selectOption({ label: 'After 30 seconds' });
+    await page.keyboard.press('Escape');
+  });
+
   await step('switches theme and remembers settings', async () => {
     await page.getByRole('button', { name: 'Settings' }).click();
     const settings = page.getByRole('dialog', { name: 'Settings' });
@@ -1044,9 +1122,10 @@ async function main() {
   });
 
   await step('raised no console errors or security-policy violations', async () => {
-    // Rejected sign-ins legitimately log a 401, and the simulated outages (the
-    // breach service, and going offline) log failed requests; nothing else may appear.
-    const expected = /Failed to load resource: (the server responded with a status of (401|429)|net::ERR_FAILED|net::ERR_INTERNET_DISCONNECTED)/;
+    // Rejected sign-ins legitimately log a 401 and the deliberate edit conflict a
+    // 409; the simulated outages (the breach service, and going offline) log
+    // failed requests. Nothing else may appear.
+    const expected = /Failed to load resource: (the server responded with a status of (401|409|429)|net::ERR_FAILED|net::ERR_INTERNET_DISCONNECTED)/;
     const unexpected = problems.filter((problem) => !expected.test(problem));
     assert.deepEqual(unexpected, []);
   });

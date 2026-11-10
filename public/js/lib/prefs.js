@@ -32,8 +32,9 @@ export const prefs = {
   },
 
   set(key, value) {
-    cache ??= read();
-    cache[key] = value;
+    // Start from what is stored now rather than this tab's copy, so a setting
+    // changed in another tab is not undone by saving a different one here.
+    cache = { ...cache, ...read(), [key]: value };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
     } catch {
@@ -48,6 +49,21 @@ export const prefs = {
     return () => listeners.delete(listener);
   },
 };
+
+// Pick up settings changed in another tab straight away (a tightened
+// auto-lock time should apply everywhere, not only where it was set).
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key !== null && event.key !== STORAGE_KEY) return;
+    const before = cache ?? {};
+    cache = read();
+    for (const key of new Set([...Object.keys(before), ...Object.keys(cache)])) {
+      if (JSON.stringify(before[key]) !== JSON.stringify(cache[key])) {
+        for (const listener of listeners) listener(key, prefs.get(key));
+      }
+    }
+  });
+}
 
 /** Applies the chosen theme to the page. */
 export function applyTheme() {

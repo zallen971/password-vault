@@ -31,7 +31,10 @@ const COMMON = new Set(
   passw admin123 root123 test123 welcome1 welcome123 hello123 love123 master123 jesus christ heaven blessed
   faith grace hope peace happy smile dream magic secret1 mypassword mypass newpassword newpass oldpassword
   1qaz2wsx3edc 1qazxsw2 zaq1xsw2 qweasdzxc 1q2w3e4r5t q1w2e3r4t5 asdfzxcv poiuytrewq a1b2c3d4 a1b2c3 1a2b3c4d
-  birthday sydney tokyo london paris`
+  birthday sydney tokyo london paris
+  qweasd qazxsw qweqwe asdasd zxcasd qwer asdfg zxcv 123qweasd q1w2e3 q1w2e3r4t5y6 1q2w3e4r5t6y qwer1234 1234qwer
+  asdf1234 azerty123 qwertz 147258369 147852369 123654789 741852963 963852741 789456123 159357 951753 123654
+  1234554321 123454321 12341234 123123123 abc123456 a123456 a1234567 abc12345 1a2b3c`
     .split(/\s+/)
     .filter(Boolean),
 );
@@ -85,6 +88,7 @@ const LETTER_BITS = Math.log2(26);
 const DIGIT_BITS = Math.log2(10);
 const SYMBOL_BITS = Math.log2(33);
 const RUNS = /\p{Lu}?\p{Ll}+|\p{Lu}+|\p{L}+|\p{Nd}+|[^\p{L}\p{Nd}]+/gu;
+const MAX_EXAMINED = 128; // characters of a password that are looked at
 const WORD_MIN = 3; // shortest letter run judged by how word-like it sounds
 const LEET_WORD_MIN = 6; // de-l33ted words must be longer to count, to avoid false alarms
 
@@ -173,11 +177,37 @@ function letterRun(run, randomBits) {
   return { bits: n * randomBits, word: false };
 }
 
+/** "2468", "9876", "890123": every digit differs from the last by the same amount, wrapping past 9. */
+function isDigitProgression(run) {
+  const step = (run.charCodeAt(1) - run.charCodeAt(0) + 10) % 10;
+  if (step === 0) return false;
+  for (let i = 2; i < run.length; i += 1) {
+    if ((run.charCodeAt(i) - run.charCodeAt(i - 1) + 10) % 10 !== step) return false;
+  }
+  return true;
+}
+
+/** Six or eight digits that read as a calendar date in any common order. */
+function looksLikeDate(run) {
+  const day = (text) => Number(text) >= 1 && Number(text) <= 31;
+  const month = (text) => Number(text) >= 1 && Number(text) <= 12;
+  const dayAndMonth = (a, b) => (day(a) && month(b)) || (month(a) && day(b));
+  if (run.length === 8) {
+    const year = (text) => Number(text) >= 1900 && Number(text) <= 2099;
+    return (year(run.slice(4)) && dayAndMonth(run.slice(0, 2), run.slice(2, 4))) || (year(run.slice(0, 4)) && dayAndMonth(run.slice(4, 6), run.slice(6)));
+  }
+  return run.length === 6 && (dayAndMonth(run.slice(0, 2), run.slice(2, 4)) || dayAndMonth(run.slice(2, 4), run.slice(4)));
+}
+
 function digitRunBits(run, randomBits, besideWord) {
   const n = run.length;
   if (n >= 2 && distinct(run) === 1) return DIGIT_BITS + Math.log2(n); // "00", "7777"
-  if (n >= 3 && isSequence(run)) return DIGIT_BITS + Math.log2(n) + 1; // "1234"
+  if (n >= 3 && isDigitProgression(run)) return 2 * DIGIT_BITS + Math.log2(n); // "1234", "2468", "890123"
+  // "112233", "111222": a simpler number with every digit typed several times.
+  const squeezed = run.replace(/(.)\1+/g, '$1');
+  if (n >= 4 && squeezed.length <= n / 2) return digitRunBits(squeezed, randomBits, besideWord) + 2;
   if (/^(19|20)\d\d$/.test(run)) return 6.6; // a year
+  if (looksLikeDate(run)) return 15;
   // Three or more digits, or any digits tacked onto a word, are "a number".
   if (n >= 3 || besideWord) return n * DIGIT_BITS;
   return n * randomBits;
@@ -252,11 +282,45 @@ function revealsWord(plain, swapped) {
   return false;
 }
 
+const SHIFTED_DIGITS = { '!': '1', '@': '2', '#': '3', $: '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0' };
+
+/** What the same keys type without Shift: "!QAZ2wsx" -> "1qaz2wsx". */
+const unshift = (text) => text.toLowerCase().replace(/[!@#$%^&*()]/g, (char) => SHIFTED_DIGITS[char]);
+
+/** A trivially predictable string: one character repeated, or a run along the alphabet, digits or a keyboard row. */
+function simplePatternBits(part) {
+  if (distinct(part) === 1) return 5 + Math.log2(part.length);
+  if (/^\d+$/.test(part)) return isDigitProgression(part) ? 2 * DIGIT_BITS + Math.log2(part.length) : null;
+  if (!/^[a-z]+$/.test(part)) return null;
+  const onKeyboard = KEYBOARD_ROWS.some((row) => row.includes(part) || row.includes(reverse(part)));
+  return onKeyboard || isSequence(part) ? LETTER_BITS + Math.log2(part.length) + 1 : null;
+}
+
+/**
+ * Two to four trivial patterns dealt out alternately, as in "1q2w3e4r"
+ * ("1234" and "qwer") or "1qaz2wsx3edc" (three keyboard rows read downwards).
+ * Returns the cost in bits, or null if the text is not built that way.
+ */
+function interleavedBits(text) {
+  const plain = unshift(text);
+  const chars = [...plain];
+  for (let strands = 2; strands <= 4; strands += 1) {
+    if (chars.length < strands * 3) break;
+    let bits = Math.log2(strands) + (plain === text ? 0 : 2);
+    for (let offset = 0; offset < strands && bits !== null; offset += 1) {
+      const strand = simplePatternBits(chars.filter((_, index) => index % strands === offset).join(''));
+      bits = strand === null ? null : bits + strand;
+    }
+    if (bits !== null) return bits;
+  }
+  return null;
+}
+
 /** If the password is a well-known one plus decoration, how many extra characters it has. */
 function commonDecoration(text) {
   const lower = text.toLowerCase();
   const trim = (value) => value.replace(/^[^a-z]+|[^a-z]+$/g, '');
-  const candidates = new Set([lower, trim(lower)]);
+  const candidates = new Set([lower, trim(lower), unshift(lower)]);
   for (const value of [...candidates]) {
     const full = value.replace(/[@4836!0$57+1]/g, (char) => LEET[char]);
     candidates.add(full);
@@ -280,19 +344,23 @@ const scoreOf = (bits) => (bits < 28 ? 0 : bits < 40 ? 1 : bits < 58 ? 2 : bits 
  * @returns {{score: 0|1|2|3|4, bits: number, label: string}}
  */
 export function estimateStrength(password) {
-  const text = String(password ?? '');
+  // Only the first part of a very long value is examined. That keeps the
+  // estimate quick whatever is pasted or imported, and by then the answer
+  // no longer depends on the rest.
+  const text = String(password ?? '').slice(0, MAX_EXAMINED);
   if (!text) return { score: 0, bits: 0, label: STRENGTH_LABELS[0] };
 
   let bits = entropyOf(text);
+  const interleaved = interleavedBits(text);
+  if (interleaved !== null) bits = Math.min(bits, interleaved);
   const { plain, swapped } = unleet(text);
   if (swapped.length && revealsWord(plain, swapped)) bits = Math.min(bits, entropyOf(plain) + swapped.length);
 
   const decoration = commonDecoration(text);
   if (decoration !== null) bits = Math.min(bits, 6 + 2.5 * decoration);
 
-  // The same thing typed several times over: "abc123abc123". (Skipped for very
-  // long input, where the search would be slow and the answer is not in doubt.)
-  const repeated = text.length <= 256 ? /^(.+?)\1+$/su.exec(text) : null;
+  // The same thing typed several times over: "abc123abc123".
+  const repeated = /^(.+?)\1+$/su.exec(text);
   if (repeated) bits = Math.min(bits, estimateStrength(repeated[1]).bits + Math.log2(text.length / repeated[1].length) + 1);
 
   bits = Math.max(1, Math.round(bits));

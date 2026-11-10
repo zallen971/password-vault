@@ -17,7 +17,7 @@ import {
 import { WORDS } from '../public/js/lib/wordlist.js';
 import { estimateStrength } from '../public/js/lib/strength.js';
 import { parseCsv, parseCsvRecords, toCsv } from '../public/js/lib/csv.js';
-import { parseImport, ImportError } from '../public/js/lib/importers.js';
+import { parseImport, decodeFileBytes, ImportError } from '../public/js/lib/importers.js';
 import { toBitwardenJson, toBitwardenCsv, toEncryptedBackup, openEncryptedBackup } from '../public/js/lib/exporters.js';
 import {
   normalizeItem,
@@ -33,21 +33,27 @@ import {
 import { findBreachedPasswords } from '../public/js/lib/breach.js';
 import { analyzeVault } from '../public/js/lib/health.js';
 
-const FAST_KDF = { name: 'PBKDF2', hash: 'SHA-256', iterations: 100_000 };
+import { pbkdf2Sync } from 'node:crypto';
+
+// The lowest (and default) key-derivation setting the app accepts.
+const FAST_KDF = { name: 'PBKDF2', hash: 'SHA-256', iterations: 600_000 };
 const ascii = (text) => new TextEncoder().encode(text);
 
 describe('crypto', () => {
-  test('PBKDF2 matches a known test vector', async () => {
-    // PBKDF2-HMAC-SHA256("password", "salt", 100000 iterations, 32 bytes)
+  test('key stretching is standard PBKDF2-HMAC-SHA256', async () => {
+    // Checked against Node's independent implementation, not just against itself.
     const key = await vaultCrypto.deriveMasterKey('password', ascii('salt'), FAST_KDF);
-    assert.equal(Buffer.from(key).toString('hex'), '0394a2ede332c9a13eb82e9b24631604c31df978b4e2f0fbd2c549944f9d79a5');
+    assert.equal(Buffer.from(key).toString('hex'), pbkdf2Sync('password', 'salt', 600_000, 32, 'sha256').toString('hex'));
+    const other = await vaultCrypto.deriveMasterKey('pässwörd ✓', ascii('another salt value'), { ...FAST_KDF, iterations: 700_000 });
+    assert.equal(Buffer.from(other).toString('hex'), pbkdf2Sync('pässwörd ✓'.normalize('NFKC'), 'another salt value', 700_000, 32, 'sha256').toString('hex'));
   });
 
   test('refuses weak or unknown key-derivation settings', async () => {
     const salt = ascii('0123456789abcdef');
     for (const kdf of [
       { ...FAST_KDF, iterations: 1 },
-      { ...FAST_KDF, iterations: 99_999 },
+      { ...FAST_KDF, iterations: 100_000 },
+      { ...FAST_KDF, iterations: 599_999 },
       { ...FAST_KDF, iterations: 50_000_000 },
       { ...FAST_KDF, iterations: '600000' },
       { ...FAST_KDF, hash: 'SHA-1' },
@@ -129,6 +135,23 @@ describe('crypto', () => {
     }
     await assert.rejects(vaultCrypto.decryptJson(vaultKey, vaultCrypto.toBase64(bytes.slice(0, 20)), 'record:a'));
     await assert.rejects(vaultCrypto.decryptJson(vaultKey, '', 'record:a'));
+  });
+
+  test('record sizes reveal little about their contents', async () => {
+    const { vaultKey } = await vaultCrypto.createAccountKeys('pw pw pw pw', FAST_KDF);
+    const size = async (value) => vaultCrypto.fromBase64(await vaultCrypto.encryptJson(vaultKey, value, 'record:x')).length;
+    const folder = { kind: 'folder', name: 'Work' };
+    const shortPassword = { kind: 'item', type: 'login', name: 'Mail', login: { username: 'ada', password: 'x' } };
+    const longPassword = { kind: 'item', type: 'login', name: 'Mail', login: { username: 'ada', password: 'x'.repeat(64) } };
+    const sizes = await Promise.all([folder, shortPassword, longPassword].map(size));
+    assert.equal(sizes[0], sizes[1], 'a folder is the same size as a small item');
+    assert.equal(sizes[1], sizes[2], 'a longer password does not change the size');
+    assert.equal(await size({ notes: 'n'.repeat(600) }), sizes[0] + 512, 'sizes grow in whole blocks');
+    // Padding is invisible once decrypted.
+    const blob = await vaultCrypto.encryptJson(vaultKey, shortPassword, 'record:x');
+    assert.deepEqual(await vaultCrypto.decryptJson(vaultKey, blob, 'record:x'), shortPassword);
+    const exact = { text: 'é'.repeat(249) }; // multi-byte characters: 498 + 11 bytes of JSON = 509
+    assert.deepEqual(await vaultCrypto.decryptJson(vaultKey, await vaultCrypto.encryptJson(vaultKey, exact, 'record:x'), 'record:x'), exact);
   });
 
   test('base64 round-trips binary data of any size', () => {
@@ -276,8 +299,9 @@ describe('generator', () => {
     assert.equal(fancy.split('.').length, 4);
     assert.match(fancy, /\d/);
     for (const word of fancy.split('.')) assert.match(word, /^[A-Z]/);
-    assert.equal(generatePassphrase({ words: 1 }).split('-').length, 3);
-    assert.equal(generatePassphrase({ words: 99 }).split('-').length, 12);
+    // Counted with a space as the separator: a few list words ("t-shirt") contain a hyphen themselves.
+    assert.equal(generatePassphrase({ words: 1, separator: ' ' }).split(' ').length, 3);
+    assert.equal(generatePassphrase({ words: 99, separator: ' ' }).split(' ').length, 12);
   });
 
   test('entropy figures', () => {
@@ -300,6 +324,28 @@ describe('strength', () => {
     ]) {
       assert.equal(score(password), 0, JSON.stringify(password));
     }
+  });
+
+  test('sees through keyboard walks, digit patterns and dates', () => {
+    for (const password of [
+      '123456789012', '987654321098', '112233445566', '111222333444', '121212121212', '000000000000', '2468024680',
+      '1q2w3e4r5t6y', 'q1w2e3r4', 'a1b2c3d4e5f6', '!QAZ2wsx#EDC', '!@#$%^&*()', 'Qwerty!@#$%^', '147258369',
+      '19850312', '31121999', '010190', '20261110',
+    ]) {
+      assert.equal(score(password), 0, JSON.stringify(password));
+    }
+    // Longer walks are still flagged as weak (and so trigger the master-password warning).
+    for (const password of ['1qaz2wsx3edc4rfv', 'zaq1xsw2cde3', '5550123456', '246813579']) {
+      assert.ok(score(password) <= 1, `${password} scored ${score(password)}`);
+    }
+  });
+
+  test('stays fast on absurdly long input', () => {
+    const started = performance.now();
+    for (const text of [`a${'7'.repeat(380_000)}a`, 'ab'.repeat(200_000), `${'x'.repeat(100_000)}!${'9'.repeat(100_000)}`, '🔑'.repeat(50_000)]) {
+      assert.equal(typeof estimateStrength(text).score, 'number');
+    }
+    assert.ok(performance.now() - started < 1000, 'a pasted or imported value must never freeze the page');
   });
 
   test('rates human-style passwords as weak or fair, never strong', () => {
@@ -575,9 +621,46 @@ describe('import and export', () => {
     assert.equal(ssh.type, 'note');
     assert.deepEqual(ssh.fields[0], { name: 'Private key', value: 'PRIVATE', type: 'hidden' });
 
-    assert.equal(result.warnings.length, 2);
-    assert.match(result.warnings[0], /1 passkey/);
-    assert.match(result.warnings[1], /2 items are/);
+    assert.equal(result.warnings.length, 3);
+    assert.match(result.warnings[0], /1 passkey /);
+    assert.match(result.warnings[1], /1 linked custom field /);
+    assert.match(result.warnings[2], /2 items are /);
+    assert.deepEqual(result.folders, ['Work', 'Personal']);
+  });
+
+  test('reports everything a Bitwarden import leaves behind', () => {
+    const result = parseImport(
+      JSON.stringify({
+        encrypted: false,
+        folders: [{ id: 'f1', name: 'Used' }, { id: 'f2', name: 'Empty folder' }],
+        items: [
+          { type: 1, name: 'Guarded', folderId: 'f1', reprompt: 1, login: { username: 'u', password: 'p' } },
+          { type: 1, name: 'Plain', folderId: 'f1', reprompt: 0, login: { username: 'u', password: 'p' } },
+        ],
+      }),
+    );
+    assert.deepEqual(result.folders, ['Used', 'Empty folder'], 'empty folders are not forgotten');
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /1 item asks for the master password again/);
+    assert.deepEqual(parseImport('name,url,username,password,folder\nA,https://a.example,u,p,Shop\nB,https://b.example,u,p,Shop').folders, ['Shop']);
+  });
+
+  test('reads files that are not UTF-8 without mangling them', () => {
+    const password = 'Mötley£Crüe-2024';
+    const csv = `name,url,username,password\nBand,https://band.example,fan,${password}\n`;
+    const latin1 = Uint8Array.from(csv, (char) => char.charCodeAt(0)); // what Excel's "CSV (Comma delimited)" writes
+    const utf8 = new TextEncoder().encode(csv);
+    const utf16le = new Uint8Array([0xff, 0xfe, ...[...csv].flatMap((char) => [char.charCodeAt(0) & 0xff, char.charCodeAt(0) >> 8])]);
+    const utf16be = new Uint8Array([0xfe, 0xff, ...[...csv].flatMap((char) => [char.charCodeAt(0) >> 8, char.charCodeAt(0) & 0xff])]);
+    const utf8bom = new Uint8Array([0xef, 0xbb, 0xbf, ...utf8]);
+
+    for (const [bytes, encoding] of [[utf8, 'UTF-8'], [utf8bom, 'UTF-8'], [latin1, 'Windows-1252'], [utf16le, 'UTF-16'], [utf16be, 'UTF-16']]) {
+      const decoded = decodeFileBytes(bytes);
+      assert.equal(decoded.encoding, encoding);
+      assert.ok(!decoded.text.includes('\uFFFD'), `${encoding}: no replacement characters`);
+      assert.equal(parseImport(decoded.text).items[0].login.password, password, encoding);
+    }
+    assert.equal(decodeFileBytes(new Uint8Array([])).text, '');
   });
 
   test('explains why encrypted Bitwarden exports cannot be read', () => {
@@ -793,6 +876,43 @@ describe('breach check', () => {
     const broken = async () => ({ ok: false, status: 503, text: async () => '' });
     await assert.rejects(findBreachedPasswords(['password'], { fetch: broken }), /503/);
     assert.equal((await findBreachedPasswords([], { fetch: broken })).size, 0);
+  });
+});
+
+describe('preferences', () => {
+  test('saving a setting in one tab does not undo a setting saved in another', async () => {
+    const stored = new Map();
+    const storageListeners = [];
+    globalThis.localStorage = { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, String(value)) };
+    globalThis.window = { addEventListener: (type, listener) => type === 'storage' && storageListeners.push(listener) };
+    try {
+      // Two tabs: each loads its own copy of the module and reads the stored settings.
+      const tabA = (await import('../public/js/lib/prefs.js?tab=a')).prefs;
+      const tabB = (await import('../public/js/lib/prefs.js?tab=b')).prefs;
+      assert.equal(tabA.get('autoLockMinutes'), 15);
+      assert.equal(tabB.get('autoLockMinutes'), 15);
+
+      tabA.set('autoLockMinutes', 1); // tightened in tab A
+      tabA.set('clipboardClearSeconds', 10);
+      tabB.set('generator', { mode: 'passphrase' }); // tab B, still holding its old copy, saves something unrelated
+
+      const saved = JSON.parse(stored.get('vault.prefs.v1'));
+      assert.equal(saved.autoLockMinutes, 1, 'the tighter auto-lock must survive');
+      assert.equal(saved.clipboardClearSeconds, 10);
+      assert.deepEqual(saved.generator, { mode: 'passphrase' });
+      assert.equal(tabB.get('autoLockMinutes'), 1, 'and tab B now uses it too');
+
+      // The browser tells other tabs when storage changes; they pick the new values up and notify.
+      const seen = [];
+      tabB.subscribe((key, value) => seen.push([key, value]));
+      tabA.set('theme', 'dark');
+      for (const listener of storageListeners) listener({ key: 'vault.prefs.v1' });
+      assert.equal(tabB.get('theme'), 'dark');
+      assert.deepEqual(seen, [['theme', 'dark']]);
+    } finally {
+      delete globalThis.localStorage;
+      delete globalThis.window;
+    }
   });
 });
 

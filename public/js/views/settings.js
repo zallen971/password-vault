@@ -7,7 +7,7 @@ import { toast } from '../ui/toast.js';
 import { describeError } from '../ui/errors.js';
 import { prefs } from '../lib/prefs.js';
 import { DEFAULT_KDF } from '../lib/crypto.js';
-import { ImportError, parseImport } from '../lib/importers.js';
+import { ImportError, decodeFileBytes, parseImport } from '../lib/importers.js';
 import { openEncryptedBackup, toBitwardenCsv, toBitwardenJson, toEncryptedBackup } from '../lib/exporters.js';
 import { WEAK_MASTER_PASSWORD_WARNING, isWeakMasterPassword, masterPasswordProblem } from '../lib/policy.js';
 import { TYPE_INFO } from '../lib/model.js';
@@ -179,7 +179,15 @@ export function openSettings({ vault, serverInfo, tab = 'general' }) {
         return;
       }
       try {
-        handleParsed(parseImport(await file.text()), file.name);
+        const { text, encoding } = decodeFileBytes(new Uint8Array(await file.arrayBuffer()));
+        const parsed = parseImport(text);
+        if (encoding === 'Windows-1252') {
+          parsed.warnings.unshift(
+            'This file is not saved as UTF-8, so it was read as Western European (Windows-1252) text. ' +
+              'After importing, check a login whose name or password has accented or special characters.',
+          );
+        }
+        handleParsed(parsed, file.name);
       } catch (error) {
         intro(error instanceof ImportError ? error.message : 'That file could not be read.');
       }
@@ -224,11 +232,8 @@ export function openSettings({ vault, serverInfo, tab = 'general' }) {
 
     function preview(parsed, fileName, fromBackup) {
       const counts = {};
-      const folders = new Set();
-      for (const item of parsed.items) {
-        counts[item.type] = (counts[item.type] ?? 0) + 1;
-        if (item.folderName) folders.add(item.folderName.toLowerCase());
-      }
+      for (const item of parsed.items) counts[item.type] = (counts[item.type] ?? 0) + 1;
+      const folders = new Set(parsed.folders);
       const skip = h('input', { type: 'checkbox', id: 'import-skip', checked: true });
       const error = errorBox();
       const submit = h('button.btn.btn-primary', { type: 'button' }, `Import ${plural(parsed.items.length, 'item')}`);
@@ -236,7 +241,7 @@ export function openSettings({ vault, serverInfo, tab = 'general' }) {
         error.hidden = true;
         const restore = busy(submit, 'Encrypting and saving…');
         try {
-          finished(await vault.importItems(parsed.items, { skipDuplicates: skip.checked }), fromBackup);
+          finished(await vault.importItems(parsed.items, { skipDuplicates: skip.checked, folders: parsed.folders }), fromBackup);
         } catch (failure) {
           restore();
           showError(error, describeError(failure));
@@ -293,7 +298,7 @@ export function openSettings({ vault, serverInfo, tab = 'general' }) {
     const formats = [
       ['backup', 'Encrypted backup', 'Recommended. Protected by a password you choose, and can be restored into Vault.'],
       ['json', 'Bitwarden JSON', 'Not encrypted. Opens in Bitwarden and most other password managers.'],
-      ['csv', 'CSV', 'Not encrypted. Logins and notes only, for spreadsheets and simple imports.'],
+      ['csv', 'CSV', 'Not encrypted, and not a complete copy: logins and notes only, without password history or the kinds of custom field. Use JSON to move everything.'],
     ];
 
     const error = errorBox();

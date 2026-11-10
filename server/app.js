@@ -79,7 +79,7 @@ function normalizeEmail(value) {
 
 function parseKdf(kdf) {
   if (!kdf || kdf.name !== 'PBKDF2' || kdf.hash !== 'SHA-256') return null;
-  if (!Number.isInteger(kdf.iterations) || kdf.iterations < 100_000 || kdf.iterations > 10_000_000) return null;
+  if (!Number.isInteger(kdf.iterations) || kdf.iterations < DEFAULT_KDF.iterations || kdf.iterations > 10_000_000) return null;
   return { name: 'PBKDF2', hash: 'SHA-256', iterations: kdf.iterations };
 }
 

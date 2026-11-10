@@ -79,6 +79,11 @@ export class Vault extends EventTarget {
     return value?.kind === 'folder' ? value : null;
   }
 
+  /** The revision of a record as this device last saw it (null if it has none). */
+  revisionOf(id) {
+    return this.#records.get(id)?.rev ?? null;
+  }
+
   // ---- Session ----
 
   async signUp(email, password) {
@@ -107,12 +112,15 @@ export class Vault extends EventTarget {
     this.#start(token, account, key);
     try {
       await this.refresh();
-      await this.#purgeOldTrash();
     } catch (err) {
       // Never leave a half-loaded vault open.
       this.#stop(true);
       throw err;
     }
+    // Housekeeping must never stand between someone and their passwords: if
+    // the server cannot take writes right now, the clean-up waits for next time.
+    await this.#purgeOldTrash().catch(() => {});
+    if (!this.#session) throw new VaultError('locked');
   }
 
   #start(token, account, key) {
@@ -242,10 +250,14 @@ export class Vault extends EventTarget {
   // is different: it replaces the item, so it names the revision it was based
   // on and the server refuses it if that is no longer the latest.
 
-  /** Creates or updates an item and returns the saved version. */
-  async saveItem(input) {
-    // The revision the caller was looking at when they decided to save.
-    const basedOn = this.#records.get(input.id)?.rev ?? null;
+  /**
+   * Creates or updates an item and returns the saved version.
+   * `basedOn` is the revision the edit started from (see revisionOf); if the
+   * item has moved on since then, on this device or another, the save is
+   * refused with a "conflict" error instead of overwriting the newer version.
+   * Left out, it means the revision this device holds right now.
+   */
+  async saveItem(input, { basedOn = this.revisionOf(input.id) } = {}) {
     let item;
     await this.#commit(() => {
       const existing = this.item(input.id);
@@ -306,43 +318,43 @@ export class Vault extends EventTarget {
 
   /**
    * Saves imported item drafts, creating any folders they mention.
+   * `folders` lists further folder names to create even if nothing is in them.
+   * With `skipDuplicates`, a draft identical to an item already in the vault is
+   * left out; identical drafts within the import itself are all kept.
    * @returns {Promise<{added: number, skipped: number, folders: number}>}
    */
-  async importItems(drafts, { skipDuplicates = true } = {}) {
+  async importItems(drafts, { skipDuplicates = true, folders: folderNames = [] } = {}) {
     this.#require();
-    const folderIds = new Map(this.folders.map((folder) => [folder.name.toLowerCase(), folder.id]));
-    const known = skipDuplicates ? new Set(this.items.filter((item) => !item.deletedAt).map(contentKey)) : null;
+    const folderIds = new Map(this.folders.map((folder) => [folder.name, folder.id]));
+    const existing = skipDuplicates ? new Set(this.items.filter((item) => !item.deletedAt).map(contentKey)) : null;
     const folders = [];
     const items = [];
     let skipped = 0;
 
+    const folderFor = (name) => {
+      if (!folderIds.has(name)) {
+        const folder = normalizeFolder({ name });
+        folders.push(folder);
+        folderIds.set(name, folder.id);
+      }
+      return folderIds.get(name);
+    };
+
     for (const { folderName, ...draft } of drafts) {
       const item = normalizeItem({ ...draft, id: undefined, folderId: null, deletedAt: null });
-      if (known) {
-        const key = contentKey(item);
-        if (known.has(key)) {
-          skipped += 1;
-          continue;
-        }
-        known.add(key);
+      if (existing?.has(contentKey(item))) {
+        skipped += 1;
+        continue;
       }
       const name = String(folderName ?? '').trim();
-      if (name) {
-        if (!folderIds.has(name.toLowerCase())) {
-          const folder = normalizeFolder({ name });
-          folders.push(folder);
-          folderIds.set(name.toLowerCase(), folder.id);
-        }
-        item.folderId = folderIds.get(name.toLowerCase());
-      }
+      if (name) item.folderId = folderFor(name);
       items.push(item);
     }
-
-    const records = [...folders, ...items];
-    for (let start = 0; start < records.length; start += SYNC_CHUNK) {
-      const chunk = records.slice(start, start + SYNC_CHUNK);
-      await this.#commit(() => ({ upserts: chunk }));
+    for (const name of folderNames) {
+      if (String(name ?? '').trim()) folderFor(String(name).trim());
     }
+
+    await this.#commit(() => ({ upserts: [...folders, ...items] }));
     return { added: items.length, skipped, folders: folders.length };
   }
 
@@ -364,49 +376,55 @@ export class Vault extends EventTarget {
   }
 
   /**
-   * Encrypts and uploads a set of changes as one all-or-nothing step.
-   * `plan` is called when it is this operation's turn and returns
-   * `{ upserts, deletes, basedOn }`. Each change is sent with the revision it
-   * builds on (the local one, unless `basedOn` names an earlier one), and the
-   * server rejects the whole step if any of those is out of date.
+   * Encrypts and uploads a set of changes. `plan` is called when it is this
+   * operation's turn and returns `{ upserts, deletes, basedOn }`. Each change
+   * is sent with the revision it builds on (the local one, unless `basedOn`
+   * names an earlier one), and the server rejects a request if any of those
+   * is out of date. Changes go in one all-or-nothing request, except very
+   * large sets (imports, emptying a big trash), which are sent in several.
    */
   #commit(plan) {
     return this.#serialize(async () => {
       const session = this.#require();
       const { upserts = [], deletes = [], basedOn } = plan();
-      if (!upserts.length && !deletes.length) return;
-      const baseRev = (id) => (basedOn?.has(id) ? basedOn.get(id) : (this.#records.get(id)?.rev ?? null));
-      const changes = {
-        upserts: await Promise.all(
-          upserts.map(async (value) => ({
-            id: value.id,
-            baseRev: baseRev(value.id),
-            data: await encryptJson(session.key, value, recordContext(value.id)),
-          })),
-        ),
-        deletes: deletes.map((id) => ({ id, baseRev: baseRev(id) })),
-      };
+      const baseRev = (id) => (basedOn?.has(id) ? basedOn.get(id) : this.revisionOf(id));
+      const steps = [...upserts.map((value) => ({ value })), ...deletes.map((id) => ({ id }))];
+      let behind = false;
 
-      let result;
-      try {
-        result = await this.#api.sync(changes);
-      } catch (err) {
-        if (err instanceof ApiError && err.code === 'conflict') {
-          // Another device got there first. Show its version; the caller decides what next.
-          await this.#pull().catch(() => {});
-          throw new VaultError('conflict');
+      for (let start = 0; start < steps.length; start += SYNC_CHUNK) {
+        const slice = steps.slice(start, start + SYNC_CHUNK);
+        const changes = { upserts: [], deletes: [] };
+        for (const { value, id } of slice) {
+          if (value) {
+            changes.upserts.push({ id: value.id, baseRev: baseRev(value.id), data: await encryptJson(session.key, value, recordContext(value.id)) });
+          } else {
+            changes.deletes.push({ id, baseRev: baseRev(id) });
+          }
         }
-        throw err;
-      }
-      if (session !== this.#session) throw new VaultError('locked');
 
-      const upToDate = result.revision === this.#revision + 1;
-      for (const value of upserts) this.#records.set(value.id, { rev: result.revision, value });
-      for (const id of deletes) this.#records.delete(id);
-      this.#revision = result.revision;
-      this.#changed();
-      // A gap in revisions means other devices made changes we have not seen yet.
-      if (!upToDate) await this.#pull().catch(() => {});
+        let result;
+        try {
+          result = await this.#api.sync(changes);
+        } catch (err) {
+          if (err instanceof ApiError && err.code === 'conflict') {
+            // Another device got there first. Show its version; the caller decides what next.
+            await this.#pull().catch(() => {});
+            throw new VaultError('conflict');
+          }
+          throw err;
+        }
+        if (session !== this.#session) throw new VaultError('locked');
+
+        // A gap in revisions means other devices made changes we have not seen yet.
+        if (result.revision !== this.#revision + 1) behind = true;
+        for (const { value, id } of slice) {
+          if (value) this.#records.set(value.id, { rev: result.revision, value });
+          else this.#records.delete(id);
+        }
+        this.#revision = result.revision;
+        this.#changed();
+      }
+      if (behind) await this.#pull().catch(() => {});
     });
   }
 
